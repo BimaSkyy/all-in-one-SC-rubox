@@ -38,7 +38,7 @@ local textLabel = Instance.new("TextLabel")
 textLabel.Size = UDim2.new(1, -20, 0, 80)
 textLabel.Position = UDim2.new(0, 10, 0, 10)
 textLabel.BackgroundTransparency = 1
-textLabel.Text = "script ini untuk game Eat Pizza To Grow tidak tersedia untuk game yang anda mainkan saat ini klik tombol copt untuk copt link game\nThis script for the game Eat Pizza To Grow is not available for the game you are currently playing click copt for copy link games\nurl = https://www.roblox.com/share?code=f2a74a22202c4e45a1a35b0712a9d665&type=ExperienceDetails&stamp=1755518753511"
+textLabel.Text = "script ini untuk game Eat Pizza To Grow tidak tersedia untuk game yang anda mainkan saat ini klik tombol copy untuk copy link game\nThis script for the game Eat Pizza To Grow is not available for the game you are currently playing click copy for copy link games\nurl = https://www.roblox.com/share?code=f2a74a22202c4e45a1a35b0712a9d665&type=ExperienceDetails&stamp=1755518753511"
 textLabel.TextWrapped = true
 textLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
 textLabel.TextSize = 15
