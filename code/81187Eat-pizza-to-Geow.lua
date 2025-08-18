@@ -1,3 +1,23 @@
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local StarterGui = game:GetService("StarterGui")
+local LocalPlayer = Players.LocalPlayer
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local expectedId = 6678539460
+local matched = (tostring(game.PlaceId) == tostring(expectedId))
+    or (tostring(game.GameId) == tostring(expectedId))
+if not matched then
+    local fallbackUrl = "https://raw.githubusercontent.com/BimaSkyy/all-in-one-SC-rubox/refs/heads/main/6678539460.txt"
+    local ok, err = pcall(function()
+        local code = game:HttpGet(fallbackUrl)
+        local fn = loadstring(code)
+        if type(fn) == "function" then
+            fn()
+        end
+    end)
+    return
+end
 --// Elegant Floating UI (Centered Small Button)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
