@@ -8,7 +8,7 @@ local expectedId = 6678539460
 local matched = (tostring(game.PlaceId) == tostring(expectedId))
     or (tostring(game.GameId) == tostring(expectedId))
 if not matched then
-    local fallbackUrl = "https://raw.githubusercontent.com/BimaSkyy/all-in-one-SC-rubox/refs/heads/main/6678539460.txt"
+    local fallbackUrl = "https://raw.githubusercontent.com/BimaSkyy/all-in-one-SC-rubox/refs/heads/main/UI/pizzaEa.lua"
     local ok, err = pcall(function()
         local code = game:HttpGet(fallbackUrl)
         local fn = loadstring(code)
