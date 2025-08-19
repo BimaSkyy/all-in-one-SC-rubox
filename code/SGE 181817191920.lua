@@ -15,6 +15,8 @@ local GameEvents = ReplicatedStorage:WaitForChild("GameEvents")
 local BuySeedRemote = GameEvents:WaitForChild("BuySeedStock")
 local BuyGearRemote = GameEvents:WaitForChild("BuyGearStock")
 local BuyEggRemote = GameEvents:WaitForChild("BuyPetEgg")
+-- Added Beanstalk event buy remote
+local BuyEvent = GameEvents:WaitForChild("BuyEventShopStock")
 
 -- ✅ Data
 local seedData = require(ReplicatedStorage.Data.SeedData)
@@ -30,8 +32,22 @@ local seedNames, gearNames = {}, {}
 for k,v in pairs(seedData) do if v.DisplayInShop then table.insert(seedNames,k) end end
 for _,v in pairs(gearData) do if v.DisplayInShop then table.insert(gearNames,v.GearName) end end
 
+-- ✅ Beanstalk item list (untuk Auto Buy Beanstalk)
+local beanstalkItemList = {
+    "All", -- opsi khusus, beli semua (kita skip "All" saat eksekusi)
+    "Sprout Seed Pack",
+    "Sprout Egg",
+    "Mandrake",
+    "Sprout Crate",
+    "Silvel Fertilizer",
+    "Canary Melon",
+    "Amberheart",
+    "Spriggan"
+}
+
 -- ✅ State toggle
 local autoBuySeeds, autoBuyGear, autoBuyEggs = false, false, false
+local autoBuyBeanstalk = false
 
 -- ✅ GUI
 local screenGui = Instance.new("ScreenGui", PlayerGui)
@@ -49,10 +65,10 @@ mainBtn.ImageRectSize = Vector2.new(36,36)
 mainBtn.Parent = screenGui
 Instance.new("UICorner", mainBtn).CornerRadius = UDim.new(1,0)
 
--- Panel toggle compact
+-- Panel toggle compact (diperbesar supaya muat 4 toggle)
 local frame = Instance.new("Frame", screenGui)
-frame.Size = UDim2.new(0,160,0,120)
-frame.Position = UDim2.new(1,-210,0.5,-60)
+frame.Size = UDim2.new(0,180,0,150)           -- lebarnya sedikit ditambah, tinggi ditambah
+frame.Position = UDim2.new(1,-230,0.5,-75)    -- posisi awal disesuaikan
 frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
 frame.Visible = false
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0.1,0)
@@ -81,12 +97,13 @@ mainBtn.MouseButton1Click:Connect(function()
     frame.Visible = not frame.Visible
 end)
 
--- ✅ Toggle buttons
+-- ✅ Toggle buttons (ditambah Auto Buy Beanstalk sebagai toggle ke-4)
 makeToggle("Auto Buy Seeds 🌱", 1, function(v) autoBuySeeds=v end)
 makeToggle("Auto Buy Gear ⚙️", 2, function(v) autoBuyGear=v end)
 makeToggle("Auto Buy Eggs 🥚", 3, function(v) autoBuyEggs=v end)
+makeToggle("Auto Buy Beanstalk 🌾", 4, function(v) autoBuyBeanstalk=v end)
 
--- ✅ Loop Auto Buy
+-- ✅ Loop Auto Buy (membeli terus selama toggle aktif)
 task.spawn(function()
     while task.wait(0.5) do
         if autoBuySeeds then
@@ -107,6 +124,16 @@ task.spawn(function()
                 task.wait(0.3)
             end
         end
+
+        if autoBuyBeanstalk then
+            -- Beli semua item dalam beanstalkItemList (skip "All")
+            for _, name in ipairs(beanstalkItemList) do
+                if name ~= "All" then
+                    pcall(function() BuyEvent:FireServer(name) end)
+                    task.wait(0.2)
+                end
+            end
+        end
     end
 end)
 
@@ -117,7 +144,7 @@ do
         local delta = input.Position - mousePos
         mainBtn.Position = UDim2.new(btnPos.X.Scale, btnPos.X.Offset + delta.X,
                                      btnPos.Y.Scale, btnPos.Y.Offset + delta.Y)
-        frame.Position = mainBtn.Position - UDim2.new(0,170,0,0)
+        frame.Position = mainBtn.Position - UDim2.new(0,200,0,0) -- sesuaikan offset agar frame selalu di kiri tombol utama
     end
     mainBtn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
