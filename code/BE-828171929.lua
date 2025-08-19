@@ -1,8 +1,8 @@
 -- 🔧 Konfigurasi
 local PANEN_DELAY = 0.1 -- jeda antar panen buah
-local SUBMIT_DELAY = 5   -- detik antar submit event
-local CLAIM_DELAY = 1    -- jeda antar claim reward
-local CLAIM_COUNT = 20   -- jumlah claim reward
+local SUBMIT_DELAY = 0.5   -- detik antar submit event
+local CLAIM_DELAY = 0.5    -- jeda antar claim reward
+local CLAIM_COUNT = 10   -- jumlah claim reward
 
 -- Services
 local Players = game:GetService("Players")
@@ -20,24 +20,24 @@ local progressLabel = workspace.Interaction.UpdateItems.BeanstalkEvent.Beanstalk
 
 -- Categories mapping
 local Categories = {
-    ["Berry Plants"] = {"Blueberry"},
-    ["Vegetable Plants"] = {"Tomato"},
+    ["Berry Plants"] = {"Blueberry","Strawberry","Grape"},
+    ["Vegetable Plants"] = {"Tomato","Corn","Carrot","Beanstalk","Pepper","Cauliflower"},
     ["Flower Plants"] = {"Serenity"},
-    ["Spicy Plants"] = {"Pepper"},
+    ["Spicy Plants"] = {"Pepper","Jalapeno","Horned Dinoshroome"},
     ["Stalky Plants"] = {"Beanstalk"},
-    ["Zen Plants"] = {"Serenity"},
-    ["Sweet Plants"] = {"Blueberry"},
-    ["Candy Plants"] = {"Sugarglaze"},
+    ["Zen Plants"] = {"Serenity","Spiked Mango","Sakura Bush"},
+    ["Sweet Plants"] = {"Blueberry","Mango","Sugar Apple","Sugarglaze","Strawberry"},
+    ["Candy Plants"] = {"Easter Egg","Sugarglaze"},
     ["Toxic Plants"] = {"Foxglove"},
-    ["Fungus Plants"] = {"Horned Dinoshroome"},
-    ["Leafy Plants"] = {"Blueberry"},
-    ["Summer Plants"] = {"Tomato"},
-    ["Fruit Plants"] = {"Blueberry"},
-    ["Tropical Plants"] = {"Banana"},
-    ["Woody Plants"] = {"Mango"},
-    ["Prehistoric Plants"] = {"Horned Dinoshroome"},
-    ["Prickly Plants"] = {"Moon Mango"},
-    ["Night Plants"] = {"Moon Mango"},
+    ["Fungus Plants"] = {"Mushroom","Horned Dinoshroome"},
+    ["Leafy Plants"] = {"Grape","Blueberry","Apple","Sugar Apple","Beanstalk","Strawberry"},
+    ["Summer Plants"] = {"Tomato","Blueberry","Strawberry","Green Apple","Sugar Apple","Cauliflower"},
+    ["Fruit Plants"] = {"Blueberry","Grape","Strawberry","Apple","Coconut"},
+    ["Tropical Plants"] = {"Banana","Coconut","Dragon Fruit","Mango","Cocovine"},
+    ["Woody Plants"] = {"Mango","Coconut","Moon Mango","Cacao","Giant Pinecone","Kiwi"},
+    ["Prehistoric Plants"] = {"Horned Dinoshroome","Lingoberry","Amber Spine"},
+    ["Prickly Plants"] = {"Moon Mango","Dragon Fruit","Spiked Mango","Celestiberry"},
+    ["Night Plants"] = {"Celestiberry","Moon Mango","Blood Banana"},
 }
 
 -- State
@@ -114,17 +114,68 @@ catLabel.TextXAlignment = Enum.TextXAlignment.Left
 catLabel.Font = Enum.Font.GothamBold
 catLabel.TextSize = 16
 catLabel.Text = "Category: -"
+catLabel.Parent = panel
 
--- Label fruit need
-local fruitNeedLabel = catLabel:Clone()
-fruitNeedLabel.Position = UDim2.new(0,10,0,35)
-fruitNeedLabel.TextColor3 = Color3.fromRGB(255,255,255)
-fruitNeedLabel.Text = "Fruit need: -"
-fruitNeedLabel.Parent = panel
+-- Tombol info fruit (mengganti fruitNeedLabel)
+local fruitInfoBtn = Instance.new("TextButton", panel)
+fruitInfoBtn.Size = UDim2.new(0.3, 0, 0, 25)
+fruitInfoBtn.Position = UDim2.new(0.05, 0, 0, 40)
+fruitInfoBtn.BackgroundColor3 = Color3.fromRGB(80, 150, 255)
+fruitInfoBtn.TextColor3 = Color3.new(1, 1, 1)
+fruitInfoBtn.Text = "info fruit"
+fruitInfoBtn.Font = Enum.Font.GothamBold
+fruitInfoBtn.TextSize = 12
+Instance.new("UICorner", fruitInfoBtn).CornerRadius = UDim.new(1,0)
+fruitInfoBtn.Parent = panel
+
+-- Panel info buah
+local fruitPanel = Instance.new("Frame", gui)
+fruitPanel.Size = UDim2.new(0, 250, 0, 150)
+fruitPanel.Position = UDim2.new(0.5, -125, 0.5, -75)
+fruitPanel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+fruitPanel.BackgroundTransparency = 0.1
+fruitPanel.Visible = false
+Instance.new("UICorner", fruitPanel).CornerRadius = UDim.new(0.1, 0)
+
+-- Label judul fruit info
+local fruitPanelTitle = Instance.new("TextLabel", fruitPanel)
+fruitPanelTitle.Size = UDim2.new(1, 0, 0, 25)
+fruitPanelTitle.Position = UDim2.new(0, 0, 0, 5)
+fruitPanelTitle.BackgroundTransparency = 1
+fruitPanelTitle.TextColor3 = Color3.fromRGB(255, 200, 80)
+fruitPanelTitle.Text = "Fruits in Category"
+fruitPanelTitle.Font = Enum.Font.GothamBold
+fruitPanelTitle.TextSize = 16
+fruitPanelTitle.Parent = fruitPanel
+
+-- Label list buah
+local fruitListLabel = Instance.new("TextLabel", fruitPanel)
+fruitListLabel.Size = UDim2.new(1, -20, 1, -60)
+fruitListLabel.Position = UDim2.new(0, 10, 0, 35)
+fruitListLabel.BackgroundTransparency = 1
+fruitListLabel.TextColor3 = Color3.new(1, 1, 1)
+fruitListLabel.TextXAlignment = Enum.TextXAlignment.Left
+fruitListLabel.TextYAlignment = Enum.TextYAlignment.Top
+fruitListLabel.Font = Enum.Font.SourceSans
+fruitListLabel.TextSize = 14
+fruitListLabel.TextWrapped = true
+fruitListLabel.Parent = fruitPanel
+
+-- Tombol close
+local closeBtn = Instance.new("TextButton", fruitPanel)
+closeBtn.Size = UDim2.new(0.2, 0, 0, 25)
+closeBtn.Position = UDim2.new(0.4, 0, 1, -30)
+closeBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+closeBtn.TextColor3 = Color3.new(1, 1, 1)
+closeBtn.Text = "Close"
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 14
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0.2,0)
+closeBtn.Parent = fruitPanel
 
 -- Label progress
 local progLabel = catLabel:Clone()
-progLabel.Position = UDim2.new(0,10,0,60)
+progLabel.Position = UDim2.new(0,10,0,65)
 progLabel.TextColor3 = Color3.fromRGB(200,200,200)
 progLabel.Text = "Progress: -"
 progLabel.Parent = panel
@@ -157,6 +208,21 @@ descLabel.Parent = panel
 -- Toggle panel
 dragBtn.MouseButton1Click:Connect(function()
     panel.Visible = not panel.Visible
+end)
+
+-- Toggle fruit panel
+fruitInfoBtn.MouseButton1Click:Connect(function()
+    local fruits = Categories[CurrentCategory]
+    if fruits then
+        fruitListLabel.Text = table.concat(fruits, "\n")
+    else
+        fruitListLabel.Text = "No fruits for this category."
+    end
+    fruitPanel.Visible = true
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+    fruitPanel.Visible = false
 end)
 
 -- Draggable button
@@ -196,7 +262,8 @@ end)
 
 -- === Logic utama ===
 task.spawn(function()
-    while task.wait(1) do
+    local lastSubmitTime = tick()
+    while task.wait(0.1) do -- Cek lebih sering untuk respons yang lebih baik
         -- ambil kategori dari server
         local found = nil
         for _,desc in ipairs(workspace:GetDescendants()) do
@@ -210,9 +277,7 @@ task.spawn(function()
             CurrentCategory = stripTags(raw)
         end
 
-        local fruitNeeded = (Categories[CurrentCategory] and Categories[CurrentCategory][1]) or "-"
         catLabel.Text = "Category: " .. (CurrentCategory or "-")
-        fruitNeedLabel.Text = "Fruit need: " .. fruitNeeded
 
         -- progress
         local prog = progressLabel.Text or "-"
@@ -221,26 +286,36 @@ task.spawn(function()
         -- auto logic
         if AutoEventRunning then
             if prog == "900/900" then
-                -- klaim reward
-                task.wait(10)
-                for i=1,CLAIM_COUNT do
-                    if not AutoEventRunning then break end
-                    pcall(function() claimRemote:FireServer(i) end)
-                    task.wait(CLAIM_DELAY)
+                if LastCategory ~= CurrentCategory then -- Klaim hanya jika kategori sudah berubah
+                    LastCategory = CurrentCategory
                 end
-                -- stop sementara, tunggu category berubah
-                AutoEventRunning = false
-                toggleBtn.Text = "START"
-                toggleBtn.BackgroundColor3 = Color3.fromRGB(60,180,80)
+                -- Tetap menunggu di sini sampai kategori berubah atau progress turun
+            else -- progress belum 900/900
                 LastCategory = CurrentCategory
-            else
                 -- panen otomatis sesuai kategori
                 autoHarvest(CurrentCategory)
-                -- submit event
-                pcall(function() submitRemote:FireServer() end)
-                task.wait(SUBMIT_DELAY)
+
+                -- submit event setiap SUBMIT_DELAY detik
+                if tick() - lastSubmitTime >= SUBMIT_DELAY then
+                    pcall(function() submitRemote:FireServer() end)
+                    lastSubmitTime = tick()
+                end
             end
-        else
+
+            -- Lakukan klaim jika progress "900/900" dan sudah ada kategori baru.
+            -- Cek progress kembali untuk memastikan tidak ada perubahan mendadak.
+            if prog == "900/900" and LastCategory == CurrentCategory then
+                 task.wait(10)
+                 for i=1,CLAIM_COUNT do
+                     if not AutoEventRunning then break end
+                     pcall(function() claimRemote:FireServer(i) end)
+                     task.wait(CLAIM_DELAY)
+                 end
+                 -- Setelah klaim, script akan menunggu di if prog == "900/900"
+                 -- sampai kategori berubah atau progress turun.
+            end
+        else -- AutoEventRunning is false
+             -- Reset LastCategory saat kategori berubah jika skrip tidak aktif
             if LastCategory ~= "" and CurrentCategory ~= LastCategory then
                 LastCategory = ""
             end
