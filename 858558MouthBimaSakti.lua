@@ -236,6 +236,29 @@ local function waitUntilGrounded(timeout)
     end
 end
 
+-- start flying up 500 stud from current hrp pos
+local function forceFallUntilDead()
+    if not currentChar or not currentHRP or not currentHum then return end
+    while currentHum.Health > 0 do
+        startFlyMode()
+        local hrpFinal = currentHRP
+        if hrpFinal and hrpFinal.Parent then
+            local upTarget = hrpFinal.Position + Vector3.new(0,1000,0)
+            flyTo(upTarget, 250)
+            -- stop fly supaya jatuh
+            stopFlyMode()
+            -- re-enable collisions and platformstand
+            for _, part in ipairs(currentChar:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    pcall(function() part.CanCollide = true end)
+                end
+            end
+            if currentHum then pcall(function() currentHum.PlatformStand = false end) end
+        end
+        task.wait(2) -- kasih waktu jatuh, lalu cek lagi apakah sudah mati
+    end
+end
+
 local function flyTo(targetPos, speed)
     speed = speed or 100
     -- loop will keep checking currentHRP each iteration, so it survives respawn transitions
@@ -417,34 +440,17 @@ local function startCombo()
                 end
                 if not comboRunning then break end
 
-                -- start flying up 500 stud from current hrp pos
-                startFlyMode()
-                local hrpFinal = currentHRP
-                if hrpFinal and hrpFinal.Parent then
-                    local upTarget = hrpFinal.Position + Vector3.new(0,2000,0)
-                    flyTo(upTarget, 250)
-                    -- reached top: stop fly mode but ensure collisions on so player jatuh
-                    stopFlyMode()
-                    -- re-enable collisions and platformstand to fall naturally
-                    if currentChar and currentChar.Parent then
-                        for _, part in ipairs(currentChar:GetDescendants()) do
-                            if part:IsA("BasePart") then
-                                pcall(function() part.CanCollide = true end)
-                            end
-                        end
-                    end
-                    if currentHum then pcall(function() currentHum.PlatformStand = false end) end
-                    notify("Info","damn!!.",6)
-                    -- wait until humanoid dies, then loop restarts from Pos1 after respawn
-                    local died = false
-                    if currentHum then
-                        local dconn = currentHum.Died:Connect(function() died = true end)
-                        repeat task.wait(0.3) until died
-                        pcall(function() dconn:Disconnect() end)
-                    else
-                        -- if no humanoid, just wait briefly and reset
-                        task.wait(1)
-                    end
+forceFallUntilDead()
+notify("Info","damn!!.",6)
+-- tunggu humanoid bener2 mati
+local died = false
+if currentHum then
+    local dconn = currentHum.Died:Connect(function() died = true end)
+    repeat task.wait(0.3) until died
+    pcall(function() dconn:Disconnect() end)
+else
+    task.wait(1)
+end
                     -- wait for respawn
                     while not (currentChar and currentChar.Parent and currentHRP) do
                         task.wait(0.2)
