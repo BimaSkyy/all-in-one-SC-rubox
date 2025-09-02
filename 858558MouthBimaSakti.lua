@@ -421,7 +421,7 @@ local function startCombo()
                 startFlyMode()
                 local hrpFinal = currentHRP
                 if hrpFinal and hrpFinal.Parent then
-                    local upTarget = hrpFinal.Position + Vector3.new(0,1000,0)
+                    local upTarget = hrpFinal.Position + Vector3.new(0,2000,0)
                     flyTo(upTarget, 250)
                     -- reached top: stop fly mode but ensure collisions on so player jatuh
                     stopFlyMode()
