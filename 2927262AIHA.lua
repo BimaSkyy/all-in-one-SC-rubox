@@ -1,3 +1,6 @@
+-- Professional Auto-ESP + Crosshair Lock (LocalScript)
+-- Place in StarterPlayerScripts
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -76,44 +79,46 @@ end
 local function topPartOfModel(model)
     if not model then return nil end
 
-    -- cek R15 hands dulu
-    local rightHand = model:FindFirstChild("RightHand")
-    if rightHand and rightHand:IsA("BasePart") then
-        return rightHand
-    end
-
+    -- PRIORITAS R15 LEFT HAND
     local leftHand = model:FindFirstChild("LeftHand")
     if leftHand and leftHand:IsA("BasePart") then
         return leftHand
     end
 
-    -- cek R6 naming
-    local rightArm = model:FindFirstChild("Right Arm")
-    if rightArm and rightArm:IsA("BasePart") then
-        return rightArm
+    local rightHand = model:FindFirstChild("RightHand")
+    if rightHand and rightHand:IsA("BasePart") then
+        return rightHand
     end
 
+    -- PRIORITAS R6 LEFT ARM
     local leftArm = model:FindFirstChild("Left Arm")
     if leftArm and leftArm:IsA("BasePart") then
         return leftArm
     end
 
-    -- Kalau gak ada tangan sama sekali: jangan fallback ke head/HRP
-    -- Kembalikan nil sehingga model tidak dipilih untuk lock/target
+    local rightArm = model:FindFirstChild("Right Arm")
+    if rightArm and rightArm:IsA("BasePart") then
+        return rightArm
+    end
+
+    -- Kalau gak punya tangan sama sekali, jangan fallback ke head/HRP
     return nil
 end
 
 -- create BillboardGui dot above head (3D, follows model)
 local function createESP(model)
     if espMap[model] then return espMap[model] end
+
+    -- ambil tangan kiri (sudah diatur di topPartOfModel)
     local adornee = topPartOfModel(model)
     if not adornee then return nil end
 
     local bill = Instance.new("BillboardGui")
     bill.Name = "ESP_Bill"
     bill.Size = UDim2.new(0, DOT_SIZE, 0, DOT_SIZE)
-    -- tangan biasanya lebih rendah dari head, kecilkan offset (atau set 0)
-    bill.ExtentsOffset = Vector3.new(0, 0.4, 0)
+
+    -- untuk tangan, offset tidak usah tinggi (1.6 cocok untuk head)
+    bill.ExtentsOffset = Vector3.new(0, 0, 0) -- biar titik nempel di tangan kiri
     bill.Adornee = adornee
     bill.AlwaysOnTop = true
     bill.ResetOnSpawn = false
@@ -123,15 +128,23 @@ local function createESP(model)
     frame.Size = UDim2.new(1,0,1,0)
     frame.AnchorPoint = Vector2.new(0.5,0.5)
     frame.Position = UDim2.new(0.5,0.5,0,0)
-    frame.BackgroundColor3 = ENEMY_COLOR   -- default, akan di-override oleh refreshESP()
-    frame.BackgroundTransparency = 0.25
+    frame.BackgroundColor3 = ENEMY_COLOR
     frame.BorderSizePixel = 0
     frame.ZIndex = 200
+
     local uc = Instance.new("UICorner", frame)
     uc.CornerRadius = UDim.new(1,0)
 
     espMap[model] = {bill = bill, frame = frame}
     return espMap[model]
+end
+
+local function removeESP(model)
+    local data = espMap[model]
+    if data then
+        pcall(function() data.bill:Destroy() end)
+        espMap[model] = nil
+    end
 end
 
 -- scan workspace for NPCs (models with Humanoid that are not player characters)
@@ -191,21 +204,27 @@ local function pickBestTarget()
     local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     for model, meta in pairs(entities) do
         if isValidLivingModel(model) then
-            -- Kode ini sudah dihapus agar tidak ada filter tim, sehingga semua pemain (tim dan musuh) dapat di-lock.
-            local top = topPartOfModel(model)
-            if top then
-                local screenPoint, onScreen = Camera:WorldToViewportPoint(top.Position + Vector3.new(0, 0.6, 0))
-                if onScreen then
-                    local screenPos = Vector2.new(screenPoint.X, screenPoint.Y)
-                    local d = (screenPos - center).Magnitude
-                    if d <= radius then
-                        -- visible check (line of sight)
-                        if isVisibleFromCamera(model) then
-                            -- distance prioritization in world space
-                            local distWorld = myHRP and (top.Position - myHRP.Position).Magnitude or 0
-                            if distWorld < bestDist then
-                                bestDist = distWorld
-                                best = model
+            -- team check: if both players and teams exist, skip same team
+            local pl = meta.type == "player" and meta.source or nil
+            if pl and LocalPlayer.Team and pl.Team and LocalPlayer.Team == pl.Team then
+                -- same team -> skip
+            else
+                -- compute viewport point from model top
+                local top = topPartOfModel(model)
+                if top then
+                    local screenPoint, onScreen = Camera:WorldToViewportPoint(top.Position + Vector3.new(0, 0.6, 0))
+                    if onScreen then
+                        local screenPos = Vector2.new(screenPoint.X, screenPoint.Y)
+                        local d = (screenPos - center).Magnitude
+                        if d <= radius then
+                            -- visible check (line of sight)
+                            if isVisibleFromCamera(model) then
+                                -- distance prioritization in world space
+                                local distWorld = myHRP and (top.Position - myHRP.Position).Magnitude or 0
+                                if distWorld < bestDist then
+                                    bestDist = distWorld
+                                    best = model
+                                end
                             end
                         end
                     end
