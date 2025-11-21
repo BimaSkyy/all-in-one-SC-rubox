@@ -1,6 +1,3 @@
--- Professional Auto-ESP + Crosshair Lock (LocalScript)
--- Place in StarterPlayerScripts
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -8,6 +5,8 @@ local Workspace = workspace
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
+
+-- ====== Config ======
 local CIRCLE_SIZE = 220            -- diameter (px)
 local DOT_SIZE = 18                -- size for billboard dot
 local LERP_SPEED = 8               -- camera lerp speed
@@ -77,7 +76,7 @@ end
 local function topPartOfModel(model)
     if not model then return nil end
 
-    -- Prioritas lock: tangan
+    -- cek R15 hands dulu
     local rightHand = model:FindFirstChild("RightHand")
     if rightHand and rightHand:IsA("BasePart") then
         return rightHand
@@ -88,21 +87,20 @@ local function topPartOfModel(model)
         return leftHand
     end
 
-    -- fallback jika tidak ada tangan (NPC model aneh)
-    local head = model:FindFirstChild("Head")
-    if head and head:IsA("BasePart") then return head end
-
-    local hrp = model:FindFirstChild("HumanoidRootPart")
-    if hrp and hrp:IsA("BasePart") then return hrp end
-
-    -- fallback terakhir = part terbesar
-    local best
-    for _, p in ipairs(model:GetDescendants()) do
-        if p:IsA("BasePart") and (not best or p.Size.Magnitude > best.Size.Magnitude) then
-            best = p
-        end
+    -- cek R6 naming
+    local rightArm = model:FindFirstChild("Right Arm")
+    if rightArm and rightArm:IsA("BasePart") then
+        return rightArm
     end
-    return best
+
+    local leftArm = model:FindFirstChild("Left Arm")
+    if leftArm and leftArm:IsA("BasePart") then
+        return leftArm
+    end
+
+    -- Kalau gak ada tangan sama sekali: jangan fallback ke head/HRP
+    -- Kembalikan nil sehingga model tidak dipilih untuk lock/target
+    return nil
 end
 
 -- create BillboardGui dot above head (3D, follows model)
@@ -114,7 +112,8 @@ local function createESP(model)
     local bill = Instance.new("BillboardGui")
     bill.Name = "ESP_Bill"
     bill.Size = UDim2.new(0, DOT_SIZE, 0, DOT_SIZE)
-    bill.ExtentsOffset = Vector3.new(0, 1.6, 0)
+    -- tangan biasanya lebih rendah dari head, kecilkan offset (atau set 0)
+    bill.ExtentsOffset = Vector3.new(0, 0.4, 0)
     bill.Adornee = adornee
     bill.AlwaysOnTop = true
     bill.ResetOnSpawn = false
@@ -124,7 +123,8 @@ local function createESP(model)
     frame.Size = UDim2.new(1,0,1,0)
     frame.AnchorPoint = Vector2.new(0.5,0.5)
     frame.Position = UDim2.new(0.5,0.5,0,0)
-    frame.BackgroundColor3 = ENEMY_COLOR
+    frame.BackgroundColor3 = ENEMY_COLOR   -- default, akan di-override oleh refreshESP()
+    frame.BackgroundTransparency = 0.25
     frame.BorderSizePixel = 0
     frame.ZIndex = 200
     local uc = Instance.new("UICorner", frame)
@@ -132,14 +132,6 @@ local function createESP(model)
 
     espMap[model] = {bill = bill, frame = frame}
     return espMap[model]
-end
-
-local function removeESP(model)
-    local data = espMap[model]
-    if data then
-        pcall(function() data.bill:Destroy() end)
-        espMap[model] = nil
-    end
 end
 
 -- scan workspace for NPCs (models with Humanoid that are not player characters)
