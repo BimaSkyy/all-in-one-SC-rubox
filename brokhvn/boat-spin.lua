@@ -1,6 +1,5 @@
 -- ══════════════════════════════════════
 --   Boat Spin Panel  |  by BmSky
---   + Speed Sliders
 -- ══════════════════════════════════════
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -21,10 +20,6 @@ local ROUTE = {
 }
 local DETECT_RADIUS   = 25
 local DRIVER_KEYWORDS = {"driver","kemudi","pengemudi","supir","main","utama","steering","control"}
-
--- Nilai kecepatan (bisa diubah lewat slider)
-local MOVE_SPEED = 55           -- studs/detik
-local SPIN_RAD   = math.pi * 10  -- radian/detik
 
 local function IsDriverSeat(seat)
     if seat:IsA("VehicleSeat") then return true end
@@ -83,13 +78,10 @@ local C = {
     TextDim = Color3.fromRGB(100, 130, 160),
     Green   = Color3.fromRGB(80, 240, 150),
     Yellow  = Color3.fromRGB(255, 215, 60),
-    SliderFill = Color3.fromRGB(80, 140, 220),
-    SliderBg   = Color3.fromRGB(25, 35, 55),
 }
 
-local PANEL_W = 200
 local panel = Instance.new("Frame", gui)
-panel.Size             = UDim2.new(0, PANEL_W, 0, 200)
+panel.Size             = UDim2.new(0, 170, 0, 110)
 panel.Position         = UDim2.new(0, 220, 0, 200)
 panel.BackgroundColor3 = C.BG
 panel.BorderSizePixel  = 0
@@ -186,85 +178,11 @@ do
 end
 
 -- ══════════════════════════════════════
---   SPEED SLIDERS
--- ══════════════════════════════════════
-local function makeSlider(y, text, default, minVal, maxVal, callback)
-    local label = Instance.new("TextLabel", panel)
-    label.Size             = UDim2.new(1, -10, 0, 14)
-    label.Position         = UDim2.new(0, 5, 0, y)
-    label.BackgroundTransparency = 1
-    label.Text             = text .. "  " .. tostring(default)
-    label.TextColor3       = C.TextDim
-    label.Font             = Enum.Font.Gotham
-    label.TextSize         = 10
-    label.TextXAlignment   = Enum.TextXAlignment.Left
-    label.ZIndex           = 11
-
-    local sliderFrame = Instance.new("Frame", panel)
-    sliderFrame.Size             = UDim2.new(1, -10, 0, 18)
-    sliderFrame.Position         = UDim2.new(0, 5, 0, y + 16)
-    sliderFrame.BackgroundColor3 = C.SliderBg
-    sliderFrame.BorderSizePixel  = 0
-    sliderFrame.ZIndex           = 11
-    Instance.new("UICorner", sliderFrame).CornerRadius = UDim.new(0, 4)
-
-    local fill = Instance.new("Frame", sliderFrame)
-    fill.Size             = UDim2.new((default - minVal) / (maxVal - minVal), 0, 1, 0)
-    fill.BackgroundColor3 = C.SliderFill
-    fill.BorderSizePixel  = 0
-    fill.ZIndex           = 12
-    Instance.new("UICorner", fill).CornerRadius = UDim.new(0, 4)
-
-    local knob = Instance.new("Frame", fill)
-    knob.Size             = UDim2.new(0, 14, 0, 14)
-    knob.Position         = UDim2.new(1, -7, 0.5, -7)
-    knob.BackgroundColor3 = Color3.fromRGB(200, 220, 255)
-    knob.BorderSizePixel  = 0
-    knob.ZIndex           = 13
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
-
-    local dragging = false
-    local function updateValue()
-        local frac = fill.Size.X.Scale
-        local val = minVal + frac * (maxVal - minVal)
-        val = math.clamp(math.floor(val * 10 + 0.5) / 10, minVal, maxVal)
-        callback(val)
-        label.Text = text .. "  " .. tostring(val)
-    end
-
-    sliderFrame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            local relX = math.clamp((input.Position.X - sliderFrame.AbsolutePosition.X) / sliderFrame.AbsoluteSize.X, 0, 1)
-            fill.Size = UDim2.new(relX, 0, 1, 0)
-            updateValue()
-        end
-    end)
-    sliderFrame.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
-    gui.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch) then
-            local relX = math.clamp((input.Position.X - sliderFrame.AbsolutePosition.X) / sliderFrame.AbsoluteSize.X, 0, 1)
-            fill.Size = UDim2.new(relX, 0, 1, 0)
-            updateValue()
-        end
-    end)
-
-    return label, sliderFrame
-end
-
-makeSlider(92,  "Move Speed",  55,  10,  200, function(v) MOVE_SPEED = v end)
-makeSlider(130, "Spin Speed",  10,  1,   50,  function(v) SPIN_RAD = v * math.pi end)
-
--- ══════════════════════════════════════
 --   HELPER: melayang ke pos sambil spin
 -- ══════════════════════════════════════
+local MOVE_SPEED = 55   -- studs/detik
+local SPIN_RAD   = math.pi * 10  -- radian/detik
+
 local function spinMoveTo(myHRP, targetPos)
     local startPos = myHRP.Position
     local dist     = (targetPos - startPos).Magnitude
@@ -361,6 +279,7 @@ btnMain.MouseButton1Click:Connect(function()
                 attempt = attempt + 1
                 refresh()
                 if myChar and myHRP and myHum then
+                    -- coba driver seat dulu, fallback ke seat apapun
                     local s = GetNearestSeat(myHRP, true)
                     if not s then s = GetNearestSeat(myHRP, false) end
                     if s then
@@ -391,19 +310,21 @@ btnMain.MouseButton1Click:Connect(function()
             if not isRunning then resetUI("stopped"); return end
         end
 
-        -- ── Loop route ──
+        -- ── Loop route: spin-move ke setiap titik, bolak-balik ──
         lblStatus.Text = "mulai route..."
         task.wait(0.2)
 
+        -- Pertama teleport langsung ke titik pertama sambil spin sebentar
         refresh()
         if myHRP then
             local firstDest = ROUTE[1]
             lblStatus.Text = string.format("tp ke titik 1")
+            -- langsung teleport ke koordinat pertama
             pcall(function() myHRP.CFrame = CFrame.new(firstDest) end)
             task.wait(0.2)
         end
 
-        local routeIdx = 2
+        local routeIdx = 2  -- mulai dari titik kedua setelah teleport ke titik 1
         while isRunning do
             refresh()
             if not myChar or not myHRP then task.wait(0.3); continue end
@@ -417,6 +338,10 @@ btnMain.MouseButton1Click:Connect(function()
             if not reached then break end
 
             task.wait(0.05)
+            -- Maju ke titik berikut, loop kembali ke awal kalau sudah di akhir
+            -- Tapi karena titik ke-4 sama dengan titik ke-1 (-94,1,-62),
+            -- setelah titik ke-4 lanjut ke titik ke-2 (bukan ke-1 lagi) supaya
+            -- loop bola-balik berjalan smooth: 1->2->3->4(=1)->2->3->4...
             if routeIdx == #ROUTE then
                 routeIdx = 2
             else
