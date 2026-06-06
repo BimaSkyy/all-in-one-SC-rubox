@@ -1,7 +1,7 @@
 -- ══════════════════════════════════════
 --   BmSkyMods  |  by BmSky
---   (only: getW, savePos, tp to pos, bring all, esp all,
---    plus: Player List, Bang, Spektator, TP to Him)
+--   v2: bring all cek kendaraan, log "already veh",
+--       panel Car Throw Up dengan spektator + car throw
 -- ══════════════════════════════════════
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -19,7 +19,7 @@ local isBringingAll = false
 local isEspOn       = false
 local espObjects    = {}
 
--- Player Action state
+-- Player Action state (panel lama)
 local selectedPlayer  = nil
 local isBanging       = false
 local isSpectating    = false
@@ -28,7 +28,13 @@ local selectedMode    = "lari gila"
 local modeOptions     = { "lari gila", "kanan 1000", "kiri 1000" }
 local playerButtons   = {}
 
--- ── Passenger config (unchanged) ─────
+-- Car Throw panel state
+local ctSelectedPlayer   = nil
+local isCarThrowSpek     = false
+local isCarThrowing      = false
+local ctPlayerButtons    = {}
+
+-- ── Passenger / vehicle config ────────
 local DETECT_RADIUS   = 20
 local DRIVER_KEYWORDS = {"driver","kemudi","pengemudi","supir","main","utama","steering","control"}
 
@@ -48,6 +54,30 @@ local function GetNearestPassengerSeat(hrp)
         if m:IsA("Model") and m ~= LocalPlayer.Character then
             for _, s in pairs(m:GetDescendants()) do
                 if IsPassengerSeat(s) then
+                    local d = (hrp.Position - s.Position).Magnitude
+                    if d < minDist then minDist = d; nearest = s end
+                end
+            end
+        end
+    end
+    return nearest
+end
+
+-- Cek apakah player sedang dalam kendaraan (nyetir atau penumpang)
+local function IsInVehicle()
+    local char = LocalPlayer.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    return hum.SeatPart ~= nil
+end
+
+-- Cari semua seat (termasuk driver) dalam radius
+local function GetNearestAnySeat(hrp)
+    local nearest, minDist = nil, DETECT_RADIUS
+    for _, m in pairs(workspace:GetDescendants()) do
+        if m:IsA("Model") and m ~= LocalPlayer.Character then
+            for _, s in pairs(m:GetDescendants()) do
+                if (s:IsA("VehicleSeat") or s:IsA("Seat")) and s.Occupant == nil then
                     local d = (hrp.Position - s.Position).Magnitude
                     if d < minDist then minDist = d; nearest = s end
                 end
@@ -86,6 +116,7 @@ local C = {
     BtnTeal    = Color3.fromRGB(18, 95, 100),
     BtnGold    = Color3.fromRGB(120, 78, 8),
     BtnRed     = Color3.fromRGB(155, 28, 28),
+    BtnOrange  = Color3.fromRGB(170, 80, 10),
     Text       = Color3.fromRGB(220, 220, 230),
     TextDim    = Color3.fromRGB(130, 125, 158),
     TextGreen  = Color3.fromRGB(90, 245, 140),
@@ -140,10 +171,10 @@ local function showNotif(msg, isGood)
 end
 
 -- ══════════════════════════════════════
---   MAIN WINDOW (Weapon, Position, Players)
+--   MAIN WINDOW
 -- ══════════════════════════════════════
 local WIN_W   = 175
-local WIN_H   = 200
+local WIN_H   = 215
 local ROW_H   = 26
 local PAD     = 5
 local TITLE_H = 22
@@ -272,37 +303,73 @@ local btnEspAll   = makeBtn(Y, "esp all",   C.BtnTeal);   Y = Y + ROW_H + PAD
 makeSep(Y); Y = Y + 3
 local lblStatus = makeLabel(Y, "", C.TextGreen); Y = Y + 14 + PAD
 
--- Player Actions (button to open panel)
+-- Player Actions panel button
 makeSep(Y); Y = Y + 3
 makeLabel(Y, "  Player Actions", C.TextDim); Y = Y + 14
-local btnOpenPlayerPanel = makeBtn(Y, "Player List", C.BtnPurple); Y = Y + ROW_H + PAD
+local btnOpenPlayerPanel = makeBtn(Y, "Player List", C.BtnPurple); Y = Y + ROW_H + 4
+
+-- Car Throw panel button
+local btnOpenCarThrow = makeBtn(Y, "Car Throw Up", C.BtnOrange); Y = Y + ROW_H + PAD
 
 -- ══════════════════════════════════════
---   PLAYER ACTION PANEL (detached)
+--   HELPER: Buat panel detached (draggable)
 -- ══════════════════════════════════════
-local playerPanel = Instance.new("Frame", gui)
-playerPanel.Size             = UDim2.new(0, 180, 0, 0)
-playerPanel.Position         = UDim2.new(0, 20, 0, 360)  -- near main window
-playerPanel.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
-playerPanel.BorderSizePixel  = 0
-playerPanel.Visible          = false
-playerPanel.ZIndex           = 20
-Instance.new("UICorner", playerPanel).CornerRadius = UDim.new(0, 10)
-Instance.new("UIStroke", playerPanel).Color = Color3.fromRGB(90, 50, 160)
+local function makeDraggablePanel(title, posX, posY, w, zIdx, headerColor, strokeColor)
+    local panel = Instance.new("Frame", gui)
+    panel.Size             = UDim2.new(0, w, 0, 0)
+    panel.Position         = UDim2.new(0, posX, 0, posY)
+    panel.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+    panel.BorderSizePixel  = 0
+    panel.Visible          = false
+    panel.ZIndex           = zIdx
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+    local stroke = Instance.new("UIStroke", panel)
+    stroke.Color = strokeColor or Color3.fromRGB(90, 50, 160)
 
--- Header
-local pHeader = Instance.new("TextLabel", playerPanel)
-pHeader.Size             = UDim2.new(1, 0, 0, 24)
-pHeader.BackgroundColor3 = Color3.fromRGB(75, 45, 120)
-pHeader.Text             = "Players"
-pHeader.TextColor3       = Color3.new(1, 1, 1)
-pHeader.Font             = Enum.Font.GothamBold
-pHeader.TextScaled       = true
-pHeader.BorderSizePixel  = 0
-pHeader.ZIndex           = 21
-Instance.new("UICorner", pHeader).CornerRadius = UDim.new(0, 10)
+    local hdr = Instance.new("TextLabel", panel)
+    hdr.Size             = UDim2.new(1, 0, 0, 26)
+    hdr.BackgroundColor3 = headerColor or Color3.fromRGB(75, 45, 120)
+    hdr.Text             = title
+    hdr.TextColor3       = Color3.new(1, 1, 1)
+    hdr.Font             = Enum.Font.GothamBold
+    hdr.TextScaled       = true
+    hdr.BorderSizePixel  = 0
+    hdr.ZIndex           = zIdx + 1
+    Instance.new("UICorner", hdr).CornerRadius = UDim.new(0, 10)
 
--- ScrollingFrame for player list
+    -- drag
+    do
+        local dragging, dStart, wStart = false, nil, nil
+        hdr.InputBegan:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1
+            or inp.UserInputType == Enum.UserInputType.Touch then
+                dragging = true; dStart = inp.Position; wStart = panel.Position
+                inp.Changed:Connect(function()
+                    if inp.UserInputState == Enum.UserInputState.End then dragging = false end
+                end)
+            end
+        end)
+        hdr.InputChanged:Connect(function(inp)
+            if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
+            or inp.UserInputType == Enum.UserInputType.Touch) then
+                local d = inp.Position - dStart
+                panel.Position = UDim2.new(wStart.X.Scale, wStart.X.Offset + d.X,
+                                           wStart.Y.Scale, wStart.Y.Offset + d.Y)
+            end
+        end)
+    end
+
+    return panel, hdr
+end
+
+-- ══════════════════════════════════════
+--   PLAYER ACTION PANEL (panel lama)
+-- ══════════════════════════════════════
+local playerPanel, pHeader = makeDraggablePanel(
+    "Players", 20, 360, 180, 20,
+    Color3.fromRGB(75, 45, 120), Color3.fromRGB(90, 50, 160)
+)
+
 local pScroller = Instance.new("ScrollingFrame", playerPanel)
 pScroller.Size                 = UDim2.new(1, -8, 1, -84)
 pScroller.Position             = UDim2.new(0, 4, 0, 82)
@@ -322,7 +389,6 @@ local function updatePanelCanvas()
     pScroller.CanvasSize = UDim2.new(0, 0, 0, pLayout.AbsoluteContentSize.Y + 6)
 end
 
--- Player buttons
 local function addPlayerBtn(plr)
     if plr == LocalPlayer then return end
     if playerButtons[plr.Name] then return end
@@ -348,7 +414,6 @@ local function addPlayerBtn(plr)
         else
             selectedPlayer = plr
         end
-        -- update button highlights
         for _, data in pairs(playerButtons) do
             if data.btn and data.btn.Parent then
                 data.btn.BackgroundColor3 = Color3.fromRGB(38, 38, 55)
@@ -435,9 +500,9 @@ btnMode.MouseButton1Click:Connect(function()
     btnMode.BackgroundColor3 = dropdownOpen and Color3.fromRGB(80, 55, 130) or Color3.fromRGB(50, 50, 75)
 end)
 
--- Action buttons (bang, spektator, tp to him)
-local function makeActionBtn(x, y, w, h, text, color)
-    local b = Instance.new("TextButton", playerPanel)
+-- Action buttons panel lama
+local function makeActionBtn(parent, x, y, w, h, text, color, zIdx)
+    local b = Instance.new("TextButton", parent)
     b.Size             = UDim2.new(0, w, 0, h)
     b.Position         = UDim2.new(0, x, 0, y)
     b.Text             = text
@@ -446,16 +511,15 @@ local function makeActionBtn(x, y, w, h, text, color)
     b.Font             = Enum.Font.GothamBold
     b.TextScaled       = true
     b.BorderSizePixel  = 0
-    b.ZIndex           = 22
+    b.ZIndex           = zIdx or 22
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
     return b
 end
 
-local btnBang   = makeActionBtn(6,  56, 48, 26, "bang",      Color3.fromRGB(210, 40, 40))
-local btnSpek   = makeActionBtn(60, 56, 70, 26, "spektator", Color3.fromRGB(30, 90, 180))
-local btnTpHim  = makeActionBtn(136,56, 38, 26, "tp",        Color3.fromRGB(160, 100, 20))
+local btnBang   = makeActionBtn(playerPanel, 6,  56, 48, 26, "bang",      Color3.fromRGB(210, 40, 40))
+local btnSpek   = makeActionBtn(playerPanel, 60, 56, 70, 26, "spektator", Color3.fromRGB(30, 90, 180))
+local btnTpHim  = makeActionBtn(playerPanel, 136,56, 38, 26, "tp",        Color3.fromRGB(160, 100, 20))
 
--- Toggle panel
 local playerPanelOpen = false
 btnOpenPlayerPanel.MouseButton1Click:Connect(function()
     playerPanelOpen = not playerPanelOpen
@@ -463,238 +527,137 @@ btnOpenPlayerPanel.MouseButton1Click:Connect(function()
         playerPanel.Visible = true
         TweenService:Create(playerPanel,
             TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-            { Size = UDim2.new(0, 180, 0, 220) }
-        ):Play()
+            { Size = UDim2.new(0, 180, 0, 220) }):Play()
     else
         TweenService:Create(playerPanel,
             TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-            { Size = UDim2.new(0, 180, 0, 0) }
-        ):Play()
+            { Size = UDim2.new(0, 180, 0, 0) }):Play()
         task.delay(0.16, function() playerPanel.Visible = false end)
     end
 end)
 
--- Helper: ensure tool is equipped (from backpack)
-local function equipToolIfNeeded()
-    local char = LocalPlayer.Character
-    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum then return false end
-    -- check if tool already equipped
-    for _, v in ipairs(char:GetChildren()) do
-        if v:IsA("Tool") then return true end
-    end
-    local bp = LocalPlayer:FindFirstChild("Backpack")
-    if bp then
-        for _, v in ipairs(bp:GetChildren()) do
-            if v:IsA("Tool") then
-                hum:EquipTool(v)
-                task.wait(0.15)
-                return true
+-- ══════════════════════════════════════
+--   CAR THROW UP PANEL (baru)
+-- ══════════════════════════════════════
+local ctPanel, ctPanelHdr = makeDraggablePanel(
+    "Car Throw Up", 210, 200, 185, 30,
+    Color3.fromRGB(120, 55, 10), Color3.fromRGB(200, 100, 20)
+)
+
+-- Label status car throw
+local ctStatus = Instance.new("TextLabel", ctPanel)
+ctStatus.Size             = UDim2.new(1, -12, 0, 14)
+ctStatus.Position         = UDim2.new(0, 6, 0, 30)
+ctStatus.BackgroundTransparency = 1
+ctStatus.Text             = "select player dulu"
+ctStatus.TextColor3       = C.TextDim
+ctStatus.Font             = Enum.Font.Gotham
+ctStatus.TextSize         = 10
+ctStatus.TextXAlignment   = Enum.TextXAlignment.Left
+ctStatus.ZIndex           = 31
+
+-- List player (scroll)
+local ctScroller = Instance.new("ScrollingFrame", ctPanel)
+ctScroller.Size                 = UDim2.new(1, -8, 0, 100)
+ctScroller.Position             = UDim2.new(0, 4, 0, 48)
+ctScroller.CanvasSize           = UDim2.new(0, 0, 0, 0)
+ctScroller.ScrollBarThickness   = 4
+ctScroller.ScrollBarImageColor3 = Color3.fromRGB(200, 100, 30)
+ctScroller.BackgroundColor3     = Color3.fromRGB(12, 12, 20)
+ctScroller.BackgroundTransparency = 0.3
+ctScroller.ZIndex               = 31
+Instance.new("UICorner", ctScroller).CornerRadius = UDim.new(0, 6)
+
+local ctLayout = Instance.new("UIListLayout", ctScroller)
+ctLayout.Padding       = UDim.new(0, 3)
+ctLayout.SortOrder     = Enum.SortOrder.Name
+ctLayout.FillDirection = Enum.FillDirection.Vertical
+
+local function ctUpdateCanvas()
+    task.wait(0.05)
+    ctScroller.CanvasSize = UDim2.new(0, 0, 0, ctLayout.AbsoluteContentSize.Y + 6)
+end
+
+local function ctAddPlayerBtn(plr)
+    if plr == LocalPlayer then return end
+    if ctPlayerButtons[plr.Name] then return end
+    local btn = Instance.new("TextButton", ctScroller)
+    btn.Size             = UDim2.new(1, -4, 0, 24)
+    btn.Text             = plr.Name
+    btn.BackgroundColor3 = Color3.fromRGB(40, 30, 15)
+    btn.TextColor3       = Color3.new(1, 1, 1)
+    btn.Font             = Enum.Font.Gotham
+    btn.TextScaled       = true
+    btn.BorderSizePixel  = 0
+    btn.ZIndex           = 32
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+    btn.MouseButton1Click:Connect(function()
+        ctSelectedPlayer = (ctSelectedPlayer == plr) and nil or plr
+        -- reset warna semua
+        for _, data in pairs(ctPlayerButtons) do
+            if data.btn and data.btn.Parent then
+                data.btn.BackgroundColor3 = Color3.fromRGB(40, 30, 15)
             end
         end
-    end
-    return false
-end
-
--- Spin helpers
-local function doSpin(myHRP, targetHRP, duration)
-    if not myHRP or not targetHRP then return end
-    local startT = tick()
-    local angle  = 0
-    local SPEED  = math.pi * 14
-    while true do
-        local dt = tick() - startT
-        if dt >= duration then break end
-        angle = angle + SPEED * (1/60)
-        local h = targetHRP.Parent and targetHRP.Parent:FindFirstChild("HumanoidRootPart")
-        local pos = h and h.Position or targetHRP.Position
-        pcall(function()
-            myHRP.CFrame = CFrame.new(pos + Vector3.new(0, 0, 0))
-                         * CFrame.Angles(0, angle, 0)
-        end)
-        task.wait(1/60)
-    end
-end
-
--- Spin ke CFrame pos (untuk balik ke savedPos sambil muter)
-local function doSpinAtPos(myHRP, targetCF, duration)
-    if not myHRP or not targetCF then return end
-    local startT = tick()
-    local angle  = 0
-    local SPEED  = math.pi * 14
-    local pos    = targetCF.Position
-    while true do
-        local dt = tick() - startT
-        if dt >= duration then break end
-        angle = angle + SPEED * (1/60)
-        pcall(function()
-            myHRP.CFrame = CFrame.new(pos) * CFrame.Angles(0, angle, 0)
-        end)
-        task.wait(1/60)
-    end
-    -- pastikan tepat di posisi
-    pcall(function() myHRP.CFrame = targetCF end)
-end
-
--- Spektator logic
-btnSpek.MouseButton1Click:Connect(function()
-    if not selectedPlayer then return end
-    if not isSpectating then
-        local targetChar = selectedPlayer.Character
-        if not targetChar then return end
-        local sub = targetChar:FindFirstChildOfClass("Humanoid")
-                 or targetChar:FindFirstChild("HumanoidRootPart")
-        if not sub then return end
-        isSpectating = true
-        Camera.CameraType    = Enum.CameraType.Custom
-        Camera.CameraSubject = sub
-        btnSpek.Text             = "stop spek"
-        btnSpek.BackgroundColor3 = Color3.fromRGB(160, 50, 50)
-    else
-        isSpectating = false
-        local myHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        Camera.CameraType    = Enum.CameraType.Custom
-        Camera.CameraSubject = myHum
-        btnSpek.Text             = "spektator"
-        btnSpek.BackgroundColor3 = Color3.fromRGB(30, 90, 180)
-    end
-end)
-
--- TP to Him
-btnTpHim.MouseButton1Click:Connect(function()
-    if not selectedPlayer then return end
-    local targetChar = selectedPlayer.Character
-    if not targetChar then return end
-    local tHRP = targetChar:FindFirstChild("HumanoidRootPart")
-    if not tHRP then return end
-    local myChar = LocalPlayer.Character
-    if not myChar then return end
-    local myHRP = myChar:FindFirstChild("HumanoidRootPart")
-    if not myHRP then return end
-    pcall(function() myHRP.CFrame = tHRP.CFrame * CFrame.new(0, 0, -3) end)
-    btnTpHim.BackgroundColor3 = Color3.fromRGB(220, 160, 40)
-    task.wait(0.2)
-    btnTpHim.BackgroundColor3 = Color3.fromRGB(160, 100, 20)
-end)
-
--- Bang logic
-btnBang.MouseButton1Click:Connect(function()
-    if isBanging then return end
-    if not selectedPlayer then return end
-
-    local target     = selectedPlayer
-    local targetChar = target.Character
-    if not targetChar then return end
-    local myChar = LocalPlayer.Character
-    if not myChar then return end
-    local myHRP = myChar:FindFirstChild("HumanoidRootPart")
-    local myHum = myChar:FindFirstChildOfClass("Humanoid")
-    if not myHRP or not myHum then return end
-
-    isBanging = true
-    btnBang.BackgroundColor3 = Color3.fromRGB(100, 25, 25)
-    btnBang.Text = "..."
-
-    task.spawn(function()
-        local originalCFrame = myHRP.CFrame
-
-        -- equip tool
-        equipToolIfNeeded()
-        -- wait for equip (max 1.5s)
-        local t = 0
-        while not isToolEquipped() and t < 1.5 do task.wait(0.05); t += 0.05 end
-
-        -- teleport below target
-        local tHRP = targetChar:FindFirstChild("HumanoidRootPart")
-        if tHRP then
-            pcall(function() myHRP.CFrame = CFrame.new(tHRP.Position + Vector3.new(0, -2, 0)) end)
-        end
-        task.wait(0.03)
-
-        local activeMode = selectedMode
-
-        -- Phase 1: spin under target for 1 second
-        local p1Done = false; local p1Start = tick(); local p1Conn
-        p1Conn = RunService.Heartbeat:Connect(function()
-            local t = tick() - p1Start
-            if t >= 1 then p1Conn:Disconnect(); p1Done = true; return end
-            local h = targetChar:FindFirstChild("HumanoidRootPart")
-            if not h then return end
-            pcall(function()
-                myHRP.CFrame = CFrame.new(h.Position + Vector3.new(0, -2, 0))
-                            * CFrame.Angles(0, t * math.pi * 12, 0)
-            end)
-        end)
-        repeat task.wait(0.03) until p1Done
-
-        -- Phase 2: mode-specific
-        if activeMode == "lari gila" then
-            local skyBase = myHRP.Position + Vector3.new(0, 500, 0)
-            pcall(function() myHRP.CFrame = CFrame.new(skyBase) end)
-            task.wait(0.03)
-            local p2Done = false; local p2Start = tick(); local unequipped = false; local rng = Random.new()
-            local p2Conn = RunService.Heartbeat:Connect(function()
-                local t = tick() - p2Start
-                if t >= 1.2 then
-                    if not unequipped then
-                        unequipped = true
-                        pcall(function() myHum:UnequipTools() end)
-                    end
-                    pcall(function() myHRP.CFrame = CFrame.new(skyBase) end)
-                    if t >= 1.5 then p2Conn:Disconnect(); p2Done = true end
-                    return
-                end
-                local r = 30 + t * 15
-                pcall(function()
-                    myHRP.CFrame = CFrame.new(skyBase + Vector3.new(
-                        rng:NextNumber(-r, r), rng:NextNumber(-8, 8), rng:NextNumber(-r, r)
-                    )) * CFrame.Angles(0, t * math.pi * 20, 0)
-                end)
-            end)
-            repeat task.wait(0.03) until p2Done
+        if ctSelectedPlayer then
+            btn.BackgroundColor3 = Color3.fromRGB(180, 80, 10)
+            ctStatus.Text = "target: " .. plr.Name
+            ctStatus.TextColor3 = C.TextYellow
         else
-            local basePos = myHRP.Position
-            local dir = (activeMode == "kanan 1000") and 1 or -1
-            local p2Done = false; local p2Start = tick(); local unequipped = false
-            local p2Conn = RunService.Heartbeat:Connect(function()
-                local t = tick() - p2Start
-                if t < 0.8 then
-                    local dist = (t / 0.8) * 100
-                    pcall(function() myHRP.CFrame = CFrame.new(basePos + Vector3.new(dir * dist, 0, 0))
-                                * CFrame.Angles(0, t * math.pi * 20, 0) end)
-                else
-                    if not unequipped then
-                        unequipped = true
-                        pcall(function() myHum:UnequipTools() end)
-                    end
-                    pcall(function() myHRP.CFrame = CFrame.new(basePos + Vector3.new(dir * 100, 0, 0)) end)
-                    if t >= 1.1 then p2Conn:Disconnect(); p2Done = true end
-                end
-            end)
-            repeat task.wait(0.03) until p2Done
+            ctStatus.Text = "select player dulu"
+            ctStatus.TextColor3 = C.TextDim
         end
-
-        -- ensure unequip
-        local t2 = 0
-        while isToolEquipped() and t2 < 1 do
-            pcall(function() myHum:UnequipTools() end)
-            task.wait(0.05); t2 += 0.05
-        end
-
-        -- return to original position
-        task.wait(0.05)
-        pcall(function() myHRP.CFrame = originalCFrame end)
-        task.wait(0.08)
-        pcall(function() myHRP.CFrame = originalCFrame end)
-
-        isBanging = false
-        btnBang.BackgroundColor3 = Color3.fromRGB(210, 40, 40)
-        btnBang.Text = "bang"
     end)
+    ctPlayerButtons[plr.Name] = { btn = btn, player = plr }
+    ctUpdateCanvas()
+end
+
+local function ctRemovePlayerBtn(plr)
+    local data = ctPlayerButtons[plr.Name]
+    if data then
+        if data.btn and data.btn.Parent then data.btn:Destroy() end
+        ctPlayerButtons[plr.Name] = nil
+    end
+    if ctSelectedPlayer == plr then
+        ctSelectedPlayer = nil
+        if isCarThrowSpek then
+            isCarThrowSpek = false
+            local myHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            Camera.CameraType    = Enum.CameraType.Custom
+            Camera.CameraSubject = myHum
+        end
+        ctStatus.Text = "select player dulu"
+        ctStatus.TextColor3 = C.TextDim
+    end
+    ctUpdateCanvas()
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do ctAddPlayerBtn(plr) end
+Players.PlayerAdded:Connect(ctAddPlayerBtn)
+Players.PlayerRemoving:Connect(ctRemovePlayerBtn)
+
+-- Tombol aksi car throw
+local btnCtSpek  = makeActionBtn(ctPanel, 6,  154, 82, 26, "spektator",   Color3.fromRGB(30, 90, 180), 31)
+local btnCtThrow = makeActionBtn(ctPanel, 95, 154, 84, 26, "car throw",   Color3.fromRGB(170, 60, 10), 31)
+
+local ctPanelOpen = false
+btnOpenCarThrow.MouseButton1Click:Connect(function()
+    ctPanelOpen = not ctPanelOpen
+    if ctPanelOpen then
+        ctPanel.Visible = true
+        TweenService:Create(ctPanel,
+            TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+            { Size = UDim2.new(0, 185, 0, 190) }):Play()
+    else
+        TweenService:Create(ctPanel,
+            TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+            { Size = UDim2.new(0, 185, 0, 0) }):Play()
+        task.delay(0.16, function() ctPanel.Visible = false end)
+    end
 end)
 
 -- ══════════════════════════════════════
---   HELPER FUNCTIONS (existing)
+--   HELPER FUNCTIONS
 -- ══════════════════════════════════════
 local function isToolEquipped()
     local c = LocalPlayer.Character; if not c then return false end
@@ -725,22 +688,133 @@ local function unequipTool(hum)
     end
 end
 
--- ══════════════════════════════════════
---   EXISTING FEATURES (getW, savePos, tp to pos, bring all, esp all)
--- ══════════════════════════════════════
+local function equipToolIfNeeded()
+    local char = LocalPlayer.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    for _, v in ipairs(char:GetChildren()) do
+        if v:IsA("Tool") then return true end
+    end
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        for _, v in ipairs(bp:GetChildren()) do
+            if v:IsA("Tool") then hum:EquipTool(v); task.wait(0.15); return true end
+        end
+    end
+    return false
+end
 
--- getW
+-- Spin di posisi player target (real time ngikutin target)
+local function doSpin(myHRP, targetHRP, duration)
+    if not myHRP or not targetHRP then return end
+    local startT = tick()
+    local angle  = 0
+    local SPEED  = math.pi * 14
+    while true do
+        local dt = tick() - startT
+        if dt >= duration then break end
+        angle = angle + SPEED * (1/60)
+        local h = targetHRP.Parent and targetHRP.Parent:FindFirstChild("HumanoidRootPart")
+        local pos = h and h.Position or targetHRP.Position
+        pcall(function()
+            myHRP.CFrame = CFrame.new(pos) * CFrame.Angles(0, angle, 0)
+        end)
+        task.wait(1/60)
+    end
+end
+
+-- Spin di CFrame pos (untuk balik ke savedPos sambil muter)
+local function doSpinAtPos(myHRP, targetCF, duration)
+    if not myHRP or not targetCF then return end
+    local startT = tick()
+    local angle  = 0
+    local SPEED  = math.pi * 14
+    local pos    = targetCF.Position
+    while true do
+        local dt = tick() - startT
+        if dt >= duration then break end
+        angle = angle + SPEED * (1/60)
+        pcall(function()
+            myHRP.CFrame = CFrame.new(pos) * CFrame.Angles(0, angle, 0)
+        end)
+        task.wait(1/60)
+    end
+    pcall(function() myHRP.CFrame = targetCF end)
+end
+
+-- Dudukkan player di kendaraan (spawn baru atau yang sudah ada)
+-- Kembalikan true jika berhasil duduk
+local function ensureSeated(myChar, myHRP, myHum, lblLog)
+    -- Cek sudah duduk
+    if myHum.SeatPart ~= nil then
+        if lblLog then lblLog.Text = "already veh"; lblLog.TextColor3 = Color3.fromRGB(90, 255, 200) end
+        showNotif("already veh ✓", true)
+        return true
+    end
+    -- Cek ada kendaraan di sekitar (mungkin baru spawn tapi belum duduk)
+    local seat = GetNearestAnySeat(myHRP)
+    if seat then
+        if lblLog then lblLog.Text = "duduk di veh..." end
+        pcall(function() myHRP.CFrame = seat.CFrame * CFrame.new(0,1.5,0) end)
+        task.wait(0.15)
+        pcall(function() seat:Sit(myHum) end)
+        task.wait(0.3)
+        if myHum.SeatPart ~= nil then
+            if lblLog then lblLog.Text = "duduk ✓" end
+            return true
+        end
+    end
+    -- Perlu spawn baru
+    if lblLog then lblLog.Text = "hapus kendaraan..." end
+    pcall(function() ReplicatedStorage.RE["1Ca1r"]:FireServer("DeleteAllVehicles") end)
+    task.wait(1.2)
+    if lblLog then lblLog.Text = "spawn Bus..." end
+    pcall(function() ReplicatedStorage.RE["1Ca1r"]:FireServer("PickingCar","Bus","Work") end)
+    task.wait(2.5)
+    -- Coba duduk
+    local attempt = 0
+    local seated  = false
+    while not seated and attempt < 20 do
+        attempt = attempt + 1
+        myChar = LocalPlayer.Character
+        myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+        if myChar and myHRP and myHum then
+            local s = GetNearestPassengerSeat(myHRP)
+            if s then
+                if lblLog then lblLog.Text = "masuk kursi..." end
+                pcall(function() myHRP.CFrame = s.CFrame * CFrame.new(0,1.5,0) end)
+                task.wait(0.15)
+                pcall(function() s:Sit(myHum) end)
+                task.wait(0.3)
+                if myHum.Sit or myHum.SeatPart ~= nil then seated = true end
+            else task.wait(0.5) end
+        else task.wait(0.4) end
+    end
+    if lblLog then
+        if seated then
+            lblLog.Text = "duduk ✓"; lblLog.TextColor3 = C.TextGreen
+        else
+            lblLog.Text = "gagal masuk veh"; lblLog.TextColor3 = Color3.fromRGB(255,90,90)
+        end
+    end
+    return seated
+end
+
+-- ══════════════════════════════════════
+--   getW
+-- ══════════════════════════════════════
 btnGetW.MouseButton1Click:Connect(function()
-    pcall(function()
-        ReplicatedStorage.RE["1Too1l"]:InvokeServer("PickingTools","Couch")
-    end)
+    pcall(function() ReplicatedStorage.RE["1Too1l"]:InvokeServer("PickingTools","Couch") end)
     btnGetW.BackgroundColor3 = Color3.fromRGB(48,195,105)
     task.wait(0.2)
     btnGetW.BackgroundColor3 = C.BtnGreen
     showNotif("Item diambil!", true)
 end)
 
--- Save Pos
+-- ══════════════════════════════════════
+--   Save Pos / TP to Pos
+-- ══════════════════════════════════════
 btnSavePos.MouseButton1Click:Connect(function()
     local myChar = LocalPlayer.Character
     local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -752,7 +826,6 @@ btnSavePos.MouseButton1Click:Connect(function()
     btnSavePos.BackgroundColor3 = C.BtnBlue
 end)
 
--- TP to Pos
 btnTpToPos.MouseButton1Click:Connect(function()
     if not savedPos then showNotif("Belum ada pos tersimpan", false); return end
     local myChar = LocalPlayer.Character
@@ -767,7 +840,9 @@ btnTpToPos.MouseButton1Click:Connect(function()
     btnTpToPos.BackgroundColor3 = C.BtnGold
 end)
 
--- ESP All
+-- ══════════════════════════════════════
+--   ESP All
+-- ══════════════════════════════════════
 local function addEsp(plr)
     if plr == LocalPlayer then return end
     if espObjects[plr.Name] then return end
@@ -833,15 +908,16 @@ btnEspAll.MouseButton1Click:Connect(function()
     end
 end)
 
--- Bring All
+-- ══════════════════════════════════════
+--   BRING ALL  (dengan cek kendaraan)
+-- ══════════════════════════════════════
 btnBringAll.MouseButton1Click:Connect(function()
-    if isBringingAll then isBringingAll = false return end
+    if isBringingAll then isBringingAll = false; return end
     local myChar = LocalPlayer.Character
     local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
     if not myChar or not myHRP or not myHum then return end
 
-    -- Kalau belum save pos, pakai posisi sekarang sebagai default
     local basePos = savedPos or myHRP.CFrame
     if not savedPos then showNotif("Pakai posisi sekarang sebagai base", false) end
 
@@ -860,85 +936,91 @@ btnBringAll.MouseButton1Click:Connect(function()
             for i = #tbl, 2, -1 do local j = math.random(1,i); tbl[i],tbl[j]=tbl[j],tbl[i] end
             return tbl
         end
-        local function doPhases()
-            lblStatus.Text = "hapus kendaraan..."
-            pcall(function() ReplicatedStorage.RE["1Ca1r"]:FireServer("DeleteAllVehicles") end)
-            task.wait(1.2) if not isBringingAll then return end
-            lblStatus.Text = "spawn Bus..."
-            pcall(function() ReplicatedStorage.RE["1Ca1r"]:FireServer("PickingCar","Bus","Work") end)
-            task.wait(2.5) if not isBringingAll then return end
-            lblStatus.Text = "cari kursi..."
-            local seated = false; local attempt = 0
-            while not seated and attempt < 20 and isBringingAll do
-                attempt = attempt + 1
-                myChar = LocalPlayer.Character; myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart"); myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-                if myChar and myHRP and myHum then
-                    local seat = GetNearestPassengerSeat(myHRP)
-                    if seat then
-                        pcall(function() myHRP.CFrame = seat.CFrame * CFrame.new(0,1.5,0) end)
-                        task.wait(0.15) pcall(function() seat:Sit(myHum) end) task.wait(0.3)
-                        if myHum.Sit or myHum.SeatPart ~= nil then seated = true end
-                    else task.wait(0.5) end
-                else task.wait(0.4) end
+
+        -- ── Cek / pastikan duduk di kendaraan ──
+        myChar = LocalPlayer.Character
+        myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+
+        local alreadyIn = myHum and myHum.SeatPart ~= nil
+        if alreadyIn then
+            -- Sudah dalam kendaraan, langsung lanjut
+            lblStatus.Text = "already veh - mulai bring"
+            lblStatus.TextColor3 = Color3.fromRGB(90, 255, 200)
+            showNotif("already veh ✓", true)
+            task.wait(0.4)
+        else
+            -- Perlu spawn dan duduk
+            local ok = ensureSeated(myChar, myHRP, myHum, lblStatus)
+            if not ok then
+                isBringingAll = false
+                btnBringAll.BackgroundColor3 = C.BtnPurple
+                btnBringAll.Text = "bring all"
+                Camera.CameraType = Enum.CameraType.Custom
+                local hf2 = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if hf2 then Camera.CameraSubject = hf2 end
+                return
             end
-            if not seated then
-                showNotif("Gagal masuk Bus", false) lblStatus.Text = "gagal masuk bus" lblStatus.TextColor3 = Color3.fromRGB(255,90,90) return
-            end
-            if not isBringingAll then return end
-            lblStatus.Text = "di kursi - mulai bring"; lblStatus.TextColor3 = C.TextGreen
+            if not isBringingAll then goto cleanup end
+            lblStatus.Text = "di kursi - mulai bring"
+            lblStatus.TextColor3 = C.TextGreen
             task.wait(0.5)
+        end
 
-            -- Loop utama: teleport ke setiap player sambil spin, lalu balik ke basePos sambil spin + unequip
-            while isBringingAll do
-                myChar = LocalPlayer.Character; myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart"); myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-                if not myChar or not myHRP or not myHum then task.wait(0.3); continue end
+        -- ── Loop utama bring all ──
+        while isBringingAll do
+            myChar = LocalPlayer.Character
+            myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            if not myChar or not myHRP or not myHum then task.wait(0.3); continue end
 
-                local targets = {}
-                for _,plr in ipairs(Players:GetPlayers()) do
-                    if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-                        table.insert(targets,plr)
-                    end
+            local targets = {}
+            for _,plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                    table.insert(targets, plr)
                 end
-                if #targets == 0 then lblStatus.Text = "no players"; task.wait(0.5); continue end
-                shuffle(targets)
+            end
+            if #targets == 0 then lblStatus.Text = "no players"; task.wait(0.5); continue end
+            shuffle(targets)
 
-                for _,target in ipairs(targets) do
-                    if not isBringingAll then break end
-                    myChar = LocalPlayer.Character; myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart"); myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-                    if not myChar or not myHRP or not myHum then break end
+            for _,target in ipairs(targets) do
+                if not isBringingAll then break end
+                myChar = LocalPlayer.Character
+                myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                if not myChar or not myHRP or not myHum then break end
 
-                    local tChar = target.Character; local tHRP = tChar and tChar:FindFirstChild("HumanoidRootPart")
-                    if not tHRP then continue end
+                local tChar = target.Character
+                local tHRP  = tChar and tChar:FindFirstChild("HumanoidRootPart")
+                if not tHRP then continue end
 
-                    -- Update basePos kalau savedPos berubah
-                    basePos = savedPos or basePos
+                basePos = savedPos or basePos
+                lblStatus.Text = "→ " .. target.Name
 
-                    lblStatus.Text = "→ " .. target.Name
+                -- Equip item
+                equipTool()
+                local wt = 0
+                while not isToolEquipped() and wt < 0.8 do task.wait(0.05); wt += 0.05 end
+                if not isBringingAll then break end
 
-                    -- 1. Equip item
-                    equipTool()
-                    local wt = 0
-                    while not isToolEquipped() and wt < 0.8 do task.wait(0.05); wt += 0.05 end
-                    if not isBringingAll then break end
+                -- Teleport ke player lalu spin (ngikutin gerak player)
+                pcall(function() myHRP.CFrame = tHRP.CFrame end)
+                task.wait(0.03)
+                doSpin(myHRP, tHRP, 0.18)
+                if not isBringingAll then break end
 
-                    -- 2. Teleport ke player (di posisinya, bukan di bawah)
-                    pcall(function() myHRP.CFrame = tHRP.CFrame end)
-                    task.wait(0.03)
-
-                    -- 3. Spin di posisi player sambil equip
-                    doSpin(myHRP, tHRP, 0.18)
-                    if not isBringingAll then break end
-
-                    -- 4. Balik ke basePos sambil spin, unequip saat sampai
-                    doSpinAtPos(myHRP, basePos, 0.15)
-                    unequipTool(myHum)
-                    task.wait(0.03)
-                end
+                -- Balik ke basePos sambil spin, unequip saat sampai
+                doSpinAtPos(myHRP, basePos, 0.15)
+                unequipTool(myHum)
+                task.wait(0.03)
             end
         end
-        doPhases()
-        myChar = LocalPlayer.Character; myHum = myChar and myChar:FindFirstChildOfClass("Humanoid"); myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        if myHum then pcall(function() myHum:UnequipTools() end) unequipTool(myHum) end
+
+        ::cleanup::
+        myChar = LocalPlayer.Character
+        myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+        myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if myHum then pcall(function() myHum:UnequipTools() end); unequipTool(myHum) end
         if myHRP then
             local finalPos = savedPos or basePos
             pcall(function() myHRP.CFrame = finalPos end)
@@ -953,6 +1035,328 @@ btnBringAll.MouseButton1Click:Connect(function()
         btnBringAll.Text = "bring all"
         lblStatus.Text = "done"; lblStatus.TextColor3 = C.TextGreen
         task.delay(2, function() if lblStatus.Text == "done" then lblStatus.Text = "" end end)
+    end)
+end)
+
+-- ══════════════════════════════════════
+--   PLAYER ACTION PANEL - logika tombol lama
+-- ══════════════════════════════════════
+btnSpek.MouseButton1Click:Connect(function()
+    if not selectedPlayer then return end
+    if not isSpectating then
+        local targetChar = selectedPlayer.Character
+        if not targetChar then return end
+        local sub = targetChar:FindFirstChildOfClass("Humanoid") or targetChar:FindFirstChild("HumanoidRootPart")
+        if not sub then return end
+        isSpectating = true
+        Camera.CameraType    = Enum.CameraType.Custom
+        Camera.CameraSubject = sub
+        btnSpek.Text             = "stop spek"
+        btnSpek.BackgroundColor3 = Color3.fromRGB(160, 50, 50)
+    else
+        isSpectating = false
+        local myHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        Camera.CameraType    = Enum.CameraType.Custom
+        Camera.CameraSubject = myHum
+        btnSpek.Text             = "spektator"
+        btnSpek.BackgroundColor3 = Color3.fromRGB(30, 90, 180)
+    end
+end)
+
+btnTpHim.MouseButton1Click:Connect(function()
+    if not selectedPlayer then return end
+    local targetChar = selectedPlayer.Character
+    if not targetChar then return end
+    local tHRP = targetChar:FindFirstChild("HumanoidRootPart")
+    if not tHRP then return end
+    local myChar = LocalPlayer.Character
+    if not myChar then return end
+    local myHRP = myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return end
+    pcall(function() myHRP.CFrame = tHRP.CFrame * CFrame.new(0, 0, -3) end)
+    btnTpHim.BackgroundColor3 = Color3.fromRGB(220, 160, 40)
+    task.wait(0.2)
+    btnTpHim.BackgroundColor3 = Color3.fromRGB(160, 100, 20)
+end)
+
+btnBang.MouseButton1Click:Connect(function()
+    if isBanging then return end
+    if not selectedPlayer then return end
+    local target     = selectedPlayer
+    local targetChar = target.Character
+    if not targetChar then return end
+    local myChar = LocalPlayer.Character
+    if not myChar then return end
+    local myHRP = myChar:FindFirstChild("HumanoidRootPart")
+    local myHum = myChar:FindFirstChildOfClass("Humanoid")
+    if not myHRP or not myHum then return end
+
+    isBanging = true
+    btnBang.BackgroundColor3 = Color3.fromRGB(100, 25, 25)
+    btnBang.Text = "..."
+
+    task.spawn(function()
+        local originalCFrame = myHRP.CFrame
+        equipToolIfNeeded()
+        local t = 0
+        while not isToolEquipped() and t < 1.5 do task.wait(0.05); t += 0.05 end
+        local tHRP = targetChar:FindFirstChild("HumanoidRootPart")
+        if tHRP then
+            pcall(function() myHRP.CFrame = CFrame.new(tHRP.Position + Vector3.new(0, -2, 0)) end)
+        end
+        task.wait(0.03)
+        local activeMode = selectedMode
+        local p1Done = false; local p1Start = tick(); local p1Conn
+        p1Conn = RunService.Heartbeat:Connect(function()
+            local dt = tick() - p1Start
+            if dt >= 1 then p1Conn:Disconnect(); p1Done = true; return end
+            local h = targetChar:FindFirstChild("HumanoidRootPart")
+            if not h then return end
+            pcall(function()
+                myHRP.CFrame = CFrame.new(h.Position + Vector3.new(0, -2, 0))
+                            * CFrame.Angles(0, dt * math.pi * 12, 0)
+            end)
+        end)
+        repeat task.wait(0.03) until p1Done
+        if activeMode == "lari gila" then
+            local skyBase = myHRP.Position + Vector3.new(0, 500, 0)
+            pcall(function() myHRP.CFrame = CFrame.new(skyBase) end)
+            task.wait(0.03)
+            local p2Done = false; local p2Start = tick(); local unequipped = false; local rng = Random.new()
+            local p2Conn = RunService.Heartbeat:Connect(function()
+                local dt = tick() - p2Start
+                if dt >= 1.2 then
+                    if not unequipped then unequipped = true; pcall(function() myHum:UnequipTools() end) end
+                    pcall(function() myHRP.CFrame = CFrame.new(skyBase) end)
+                    if dt >= 1.5 then p2Conn:Disconnect(); p2Done = true end
+                    return
+                end
+                local r = 30 + dt * 15
+                pcall(function()
+                    myHRP.CFrame = CFrame.new(skyBase + Vector3.new(
+                        rng:NextNumber(-r,r), rng:NextNumber(-8,8), rng:NextNumber(-r,r)
+                    )) * CFrame.Angles(0, dt * math.pi * 20, 0)
+                end)
+            end)
+            repeat task.wait(0.03) until p2Done
+        else
+            local baseP = myHRP.Position
+            local dir = (activeMode == "kanan 1000") and 1 or -1
+            local p2Done = false; local p2Start = tick(); local unequipped = false
+            local p2Conn = RunService.Heartbeat:Connect(function()
+                local dt = tick() - p2Start
+                if dt < 0.8 then
+                    local dist = (dt / 0.8) * 100
+                    pcall(function() myHRP.CFrame = CFrame.new(baseP + Vector3.new(dir*dist,0,0))
+                                * CFrame.Angles(0, dt * math.pi * 20, 0) end)
+                else
+                    if not unequipped then unequipped = true; pcall(function() myHum:UnequipTools() end) end
+                    pcall(function() myHRP.CFrame = CFrame.new(baseP + Vector3.new(dir*100,0,0)) end)
+                    if dt >= 1.1 then p2Conn:Disconnect(); p2Done = true end
+                end
+            end)
+            repeat task.wait(0.03) until p2Done
+        end
+        local t2 = 0
+        while isToolEquipped() and t2 < 1 do
+            pcall(function() myHum:UnequipTools() end)
+            task.wait(0.05); t2 += 0.05
+        end
+        task.wait(0.05)
+        pcall(function() myHRP.CFrame = originalCFrame end)
+        task.wait(0.08)
+        pcall(function() myHRP.CFrame = originalCFrame end)
+        isBanging = false
+        btnBang.BackgroundColor3 = Color3.fromRGB(210, 40, 40)
+        btnBang.Text = "bang"
+    end)
+end)
+
+-- ══════════════════════════════════════
+--   CAR THROW - Spektator
+-- ══════════════════════════════════════
+btnCtSpek.MouseButton1Click:Connect(function()
+    if not ctSelectedPlayer then
+        showNotif("Pilih player dulu!", false); return
+    end
+    if not isCarThrowSpek then
+        local targetChar = ctSelectedPlayer.Character
+        if not targetChar then return end
+        local sub = targetChar:FindFirstChildOfClass("Humanoid") or targetChar:FindFirstChild("HumanoidRootPart")
+        if not sub then return end
+        isCarThrowSpek = true
+        Camera.CameraType    = Enum.CameraType.Custom
+        Camera.CameraSubject = sub
+        btnCtSpek.Text             = "stop spek"
+        btnCtSpek.BackgroundColor3 = Color3.fromRGB(160, 50, 50)
+    else
+        isCarThrowSpek = false
+        local myHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        Camera.CameraType    = Enum.CameraType.Custom
+        Camera.CameraSubject = myHum
+        btnCtSpek.Text             = "spektator"
+        btnCtSpek.BackgroundColor3 = Color3.fromRGB(30, 90, 180)
+    end
+end)
+
+-- ══════════════════════════════════════
+--   CAR THROW HIM - logika utama
+-- ══════════════════════════════════════
+btnCtThrow.MouseButton1Click:Connect(function()
+    if isCarThrowing then return end
+    if not ctSelectedPlayer then
+        showNotif("Pilih player dulu!", false); return
+    end
+    local target     = ctSelectedPlayer
+    local targetChar = target.Character
+    if not targetChar then showNotif("Player ga ada char", false); return end
+    local tHRP = targetChar:FindFirstChild("HumanoidRootPart")
+    if not tHRP then return end
+
+    local myChar = LocalPlayer.Character
+    local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if not myChar or not myHRP or not myHum then return end
+
+    isCarThrowing = true
+    btnCtThrow.BackgroundColor3 = Color3.fromRGB(80, 30, 5)
+    btnCtThrow.Text = "..."
+    ctStatus.Text = "memulai..."
+    ctStatus.TextColor3 = C.TextYellow
+
+    local originalCF = myHRP.CFrame
+
+    task.spawn(function()
+        -- ── Cek apakah sudah dalam kendaraan ──
+        local alreadyInVeh = myHum.SeatPart ~= nil
+
+        if alreadyInVeh then
+            -- === PATH: sudah dalam kendaraan ===
+            ctStatus.Text = "already veh ✓"
+            ctStatus.TextColor3 = Color3.fromRGB(90, 255, 200)
+            showNotif("already veh - langsung throw!", true)
+            task.wait(0.3)
+
+            -- Teleport ke target sambil bawa kendaraan (HRP ke posisi target)
+            ctStatus.Text = "tp ke target..."
+            local tC = target.Character
+            tHRP = tC and tC:FindFirstChild("HumanoidRootPart")
+            if not tHRP then goto ctCleanup end
+            pcall(function() myHRP.CFrame = tHRP.CFrame end)
+            task.wait(0.1)
+
+            -- Turun 100 stud
+            ctStatus.Text = "turun 100..."
+            local downPos = myHRP.CFrame + Vector3.new(0, -100, 0)
+            pcall(function() myHRP.CFrame = downPos end)
+            task.wait(1) -- delay 1 detik di bawah
+
+            -- Keluar dari kendaraan dulu, lalu loncat
+            ctStatus.Text = "keluar veh..."
+            pcall(function() myHum:UnequipTools() end)
+            -- Force keluar seat
+            pcall(function()
+                if myHum.SeatPart then
+                    myHum.SeatPart:Sit(myHum) -- toggle
+                end
+            end)
+            -- Tunggu sampai benar-benar keluar
+            local waitOut = 0
+            while myHum.SeatPart ~= nil and waitOut < 1 do
+                -- Paksa dengan naikkan sedikit ke atas seat agar terlepas
+                pcall(function() myHRP.CFrame = myHRP.CFrame + Vector3.new(0, 0.5, 0) end)
+                task.wait(0.05); waitOut += 0.05
+            end
+            task.wait(0.05)
+
+            -- Loncat (jump)
+            ctStatus.Text = "loncat!"
+            pcall(function() myHum.Jump = true end)
+            task.wait(0.1)
+            pcall(function() myHum.Jump = true end)
+
+        else
+            -- === PATH: belum dalam kendaraan, spawn dulu ===
+            ctStatus.Text = "hapus kendaraan..."
+            pcall(function() ReplicatedStorage.RE["1Ca1r"]:FireServer("DeleteAllVehicles") end)
+            task.wait(1.2)
+
+            ctStatus.Text = "spawn Bus..."
+            pcall(function() ReplicatedStorage.RE["1Ca1r"]:FireServer("PickingCar","Bus","Work") end)
+            task.wait(2.5)
+
+            ctStatus.Text = "cari kursi..."
+            local seated  = false
+            local attempt = 0
+            while not seated and attempt < 20 do
+                attempt = attempt + 1
+                myChar = LocalPlayer.Character
+                myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
+                if myChar and myHRP and myHum then
+                    local s = GetNearestPassengerSeat(myHRP)
+                    if s then
+                        pcall(function() myHRP.CFrame = s.CFrame * CFrame.new(0,1.5,0) end)
+                        task.wait(0.15)
+                        pcall(function() s:Sit(myHum) end)
+                        task.wait(0.3)
+                        if myHum.Sit or myHum.SeatPart ~= nil then seated = true end
+                    else task.wait(0.5) end
+                else task.wait(0.4) end
+            end
+
+            if not seated then
+                ctStatus.Text = "gagal masuk veh!"
+                ctStatus.TextColor3 = Color3.fromRGB(255,90,90)
+                showNotif("Gagal masuk Bus!", false)
+                goto ctCleanup
+            end
+
+            ctStatus.Text = "duduk ✓ - tp ke target..."
+            ctStatus.TextColor3 = C.TextGreen
+            task.wait(0.3)
+
+            -- Teleport ke target sambil spin realtime selama 2 detik
+            ctStatus.Text = "spinning di target..."
+            local spinStart = tick()
+            local spinAngle = 0
+            local SPIN_SPEED = math.pi * 20 -- super cepat
+            while tick() - spinStart < 2 do
+                local tC = target.Character
+                local th  = tC and tC:FindFirstChild("HumanoidRootPart")
+                if th then
+                    spinAngle = spinAngle + SPIN_SPEED * (1/60)
+                    pcall(function()
+                        myHRP.CFrame = CFrame.new(th.Position) * CFrame.Angles(0, spinAngle, 0)
+                    end)
+                end
+                task.wait(1/60)
+            end
+
+            -- Turun 100 stud
+            ctStatus.Text = "turun 100..."
+            pcall(function() myHRP.CFrame = myHRP.CFrame + Vector3.new(0, -100, 0) end)
+            task.wait(1) -- delay 1 detik
+
+            -- Hapus kendaraan
+            ctStatus.Text = "hapus veh..."
+            pcall(function() ReplicatedStorage.RE["1Ca1r"]:FireServer("DeleteAllVehicles") end)
+            task.wait(0.3)
+        end
+
+        -- Kembali ke posisi semula
+        ctStatus.Text = "kembali ke pos..."
+        pcall(function() myHRP.CFrame = originalCF end)
+        task.wait(0.06)
+        pcall(function() myHRP.CFrame = originalCF end)
+
+        ::ctCleanup::
+        isCarThrowing = false
+        btnCtThrow.BackgroundColor3 = Color3.fromRGB(170, 60, 10)
+        btnCtThrow.Text = "car throw"
+        ctStatus.Text = ctSelectedPlayer and ("target: " .. ctSelectedPlayer.Name) or "select player dulu"
+        ctStatus.TextColor3 = ctSelectedPlayer and C.TextYellow or C.TextDim
+        showNotif("Car Throw selesai!", true)
     end)
 end)
 
@@ -976,7 +1380,8 @@ end)
 do
     local dragging, dStart, wStart = false, nil, nil
     titleBar.InputBegan:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
             dragging = true; dStart = inp.Position; wStart = win.Position
             inp.Changed:Connect(function()
                 if inp.UserInputState == Enum.UserInputState.End then dragging = false end
@@ -984,11 +1389,13 @@ do
         end
     end)
     titleBar.InputChanged:Connect(function(inp)
-        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
+        or inp.UserInputType == Enum.UserInputType.Touch) then
             local d = inp.Position - dStart
-            win.Position = UDim2.new(wStart.X.Scale, wStart.X.Offset + d.X, wStart.Y.Scale, wStart.Y.Offset + d.Y)
+            win.Position = UDim2.new(wStart.X.Scale, wStart.X.Offset + d.X,
+                                     wStart.Y.Scale, wStart.Y.Offset + d.Y)
         end
     end)
 end
 
-print("[OK] BmSkyMods loaded")
+print("[OK] BmSkyMods v2 loaded")
