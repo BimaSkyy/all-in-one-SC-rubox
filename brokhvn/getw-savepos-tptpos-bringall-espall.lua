@@ -496,7 +496,7 @@ local function equipToolIfNeeded()
     return false
 end
 
--- Spin helpers (unchanged)
+-- Spin helpers
 local function doSpin(myHRP, targetHRP, duration)
     if not myHRP or not targetHRP then return end
     local startT = tick()
@@ -509,11 +509,31 @@ local function doSpin(myHRP, targetHRP, duration)
         local h = targetHRP.Parent and targetHRP.Parent:FindFirstChild("HumanoidRootPart")
         local pos = h and h.Position or targetHRP.Position
         pcall(function()
-            myHRP.CFrame = CFrame.new(pos + Vector3.new(0, -2, 0))
+            myHRP.CFrame = CFrame.new(pos + Vector3.new(0, 0, 0))
                          * CFrame.Angles(0, angle, 0)
         end)
         task.wait(1/60)
     end
+end
+
+-- Spin ke CFrame pos (untuk balik ke savedPos sambil muter)
+local function doSpinAtPos(myHRP, targetCF, duration)
+    if not myHRP or not targetCF then return end
+    local startT = tick()
+    local angle  = 0
+    local SPEED  = math.pi * 14
+    local pos    = targetCF.Position
+    while true do
+        local dt = tick() - startT
+        if dt >= duration then break end
+        angle = angle + SPEED * (1/60)
+        pcall(function()
+            myHRP.CFrame = CFrame.new(pos) * CFrame.Angles(0, angle, 0)
+        end)
+        task.wait(1/60)
+    end
+    -- pastikan tepat di posisi
+    pcall(function() myHRP.CFrame = targetCF end)
 end
 
 -- Spektator logic
@@ -816,11 +836,14 @@ end)
 -- Bring All
 btnBringAll.MouseButton1Click:Connect(function()
     if isBringingAll then isBringingAll = false return end
-    if not savedPos then showNotif("Simpan posisi dulu!", false); return end
     local myChar = LocalPlayer.Character
     local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
     local myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
     if not myChar or not myHRP or not myHum then return end
+
+    -- Kalau belum save pos, pakai posisi sekarang sebagai default
+    local basePos = savedPos or myHRP.CFrame
+    if not savedPos then showNotif("Pakai posisi sekarang sebagai base", false) end
 
     isBringingAll = true
     btnBringAll.BackgroundColor3 = C.BtnRed
@@ -864,9 +887,12 @@ btnBringAll.MouseButton1Click:Connect(function()
             if not isBringingAll then return end
             lblStatus.Text = "di kursi - mulai bring"; lblStatus.TextColor3 = C.TextGreen
             task.wait(0.5)
+
+            -- Loop utama: teleport ke setiap player sambil spin, lalu balik ke basePos sambil spin + unequip
             while isBringingAll do
                 myChar = LocalPlayer.Character; myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart"); myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
                 if not myChar or not myHRP or not myHum then task.wait(0.3); continue end
+
                 local targets = {}
                 for _,plr in ipairs(Players:GetPlayers()) do
                     if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
@@ -875,17 +901,37 @@ btnBringAll.MouseButton1Click:Connect(function()
                 end
                 if #targets == 0 then lblStatus.Text = "no players"; task.wait(0.5); continue end
                 shuffle(targets)
+
                 for _,target in ipairs(targets) do
                     if not isBringingAll then break end
                     myChar = LocalPlayer.Character; myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart"); myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
                     if not myChar or not myHRP or not myHum then break end
+
                     local tChar = target.Character; local tHRP = tChar and tChar:FindFirstChild("HumanoidRootPart")
                     if not tHRP then continue end
-                    lblStatus.Text = target.Name
-                    equipTool() waitEquip(0.5) if not isBringingAll then break end
-                    doSpin(myHRP, tHRP, 0.15)
-                    pcall(function() myHum:UnequipTools() end) unequipTool(myHum)
-                    doSpinAtPos(myHRP, savedPos, 0.12)
+
+                    -- Update basePos kalau savedPos berubah
+                    basePos = savedPos or basePos
+
+                    lblStatus.Text = "→ " .. target.Name
+
+                    -- 1. Equip item
+                    equipTool()
+                    local wt = 0
+                    while not isToolEquipped() and wt < 0.8 do task.wait(0.05); wt += 0.05 end
+                    if not isBringingAll then break end
+
+                    -- 2. Teleport ke player (di posisinya, bukan di bawah)
+                    pcall(function() myHRP.CFrame = tHRP.CFrame end)
+                    task.wait(0.03)
+
+                    -- 3. Spin di posisi player sambil equip
+                    doSpin(myHRP, tHRP, 0.18)
+                    if not isBringingAll then break end
+
+                    -- 4. Balik ke basePos sambil spin, unequip saat sampai
+                    doSpinAtPos(myHRP, basePos, 0.15)
+                    unequipTool(myHum)
                     task.wait(0.03)
                 end
             end
@@ -893,7 +939,12 @@ btnBringAll.MouseButton1Click:Connect(function()
         doPhases()
         myChar = LocalPlayer.Character; myHum = myChar and myChar:FindFirstChildOfClass("Humanoid"); myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
         if myHum then pcall(function() myHum:UnequipTools() end) unequipTool(myHum) end
-        if myHRP and savedPos then pcall(function() myHRP.CFrame = savedPos end) task.wait(0.04) pcall(function() myHRP.CFrame = savedPos end) end
+        if myHRP then
+            local finalPos = savedPos or basePos
+            pcall(function() myHRP.CFrame = finalPos end)
+            task.wait(0.04)
+            pcall(function() myHRP.CFrame = finalPos end)
+        end
         Camera.CameraType = Enum.CameraType.Custom
         local hf = myChar and myChar:FindFirstChildOfClass("Humanoid")
         if hf then Camera.CameraSubject = hf end
