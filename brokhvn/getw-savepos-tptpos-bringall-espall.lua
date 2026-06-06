@@ -961,7 +961,15 @@ btnBringAll.MouseButton1Click:Connect(function()
                 if hf2 then Camera.CameraSubject = hf2 end
                 return
             end
-            if not isBringingAll then goto cleanup end
+            if not isBringingAll then
+                isBringingAll = false
+                btnBringAll.BackgroundColor3 = C.BtnPurple
+                btnBringAll.Text = "bring all"
+                Camera.CameraType = Enum.CameraType.Custom
+                local hfx = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if hfx then Camera.CameraSubject = hfx end
+                return
+            end
             lblStatus.Text = "di kursi - mulai bring"
             lblStatus.TextColor3 = C.TextGreen
             task.wait(0.5)
@@ -1016,7 +1024,7 @@ btnBringAll.MouseButton1Click:Connect(function()
             end
         end
 
-        ::cleanup::
+        -- cleanup setelah loop selesai
         myChar = LocalPlayer.Character
         myHum  = myChar and myChar:FindFirstChildOfClass("Humanoid")
         myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -1229,6 +1237,7 @@ btnCtThrow.MouseButton1Click:Connect(function()
     task.spawn(function()
         -- ── Cek apakah sudah dalam kendaraan ──
         local alreadyInVeh = myHum.SeatPart ~= nil
+        local throwOk = true
 
         if alreadyInVeh then
             -- === PATH: sudah dalam kendaraan ===
@@ -1237,43 +1246,38 @@ btnCtThrow.MouseButton1Click:Connect(function()
             showNotif("already veh - langsung throw!", true)
             task.wait(0.3)
 
-            -- Teleport ke target sambil bawa kendaraan (HRP ke posisi target)
+            -- Teleport ke target
             ctStatus.Text = "tp ke target..."
-            local tC = target.Character
-            tHRP = tC and tC:FindFirstChild("HumanoidRootPart")
-            if not tHRP then goto ctCleanup end
-            pcall(function() myHRP.CFrame = tHRP.CFrame end)
-            task.wait(0.1)
+            local tC2 = target.Character
+            local tHRP2 = tC2 and tC2:FindFirstChild("HumanoidRootPart")
+            if not tHRP2 then
+                throwOk = false
+            else
+                pcall(function() myHRP.CFrame = tHRP2.CFrame end)
+                task.wait(0.1)
 
-            -- Turun 100 stud
-            ctStatus.Text = "turun 100..."
-            local downPos = myHRP.CFrame + Vector3.new(0, -100, 0)
-            pcall(function() myHRP.CFrame = downPos end)
-            task.wait(1) -- delay 1 detik di bawah
+                -- Turun 100 stud
+                ctStatus.Text = "turun 100..."
+                pcall(function() myHRP.CFrame = myHRP.CFrame + Vector3.new(0, -100, 0) end)
+                task.wait(1)
 
-            -- Keluar dari kendaraan dulu, lalu loncat
-            ctStatus.Text = "keluar veh..."
-            pcall(function() myHum:UnequipTools() end)
-            -- Force keluar seat
-            pcall(function()
-                if myHum.SeatPart then
-                    myHum.SeatPart:Sit(myHum) -- toggle
+                -- Keluar dari kendaraan dulu, lalu loncat
+                ctStatus.Text = "keluar veh..."
+                pcall(function() myHum:UnequipTools() end)
+                -- Force keluar seat dengan teleport sedikit ke atas
+                local waitOut = 0
+                while myHum.SeatPart ~= nil and waitOut < 1 do
+                    pcall(function() myHRP.CFrame = myHRP.CFrame + Vector3.new(0, 0.8, 0) end)
+                    task.wait(0.05); waitOut += 0.05
                 end
-            end)
-            -- Tunggu sampai benar-benar keluar
-            local waitOut = 0
-            while myHum.SeatPart ~= nil and waitOut < 1 do
-                -- Paksa dengan naikkan sedikit ke atas seat agar terlepas
-                pcall(function() myHRP.CFrame = myHRP.CFrame + Vector3.new(0, 0.5, 0) end)
-                task.wait(0.05); waitOut += 0.05
-            end
-            task.wait(0.05)
+                task.wait(0.08)
 
-            -- Loncat (jump)
-            ctStatus.Text = "loncat!"
-            pcall(function() myHum.Jump = true end)
-            task.wait(0.1)
-            pcall(function() myHum.Jump = true end)
+                -- Loncat setelah keluar seat
+                ctStatus.Text = "loncat!"
+                pcall(function() myHum.Jump = true end)
+                task.wait(0.12)
+                pcall(function() myHum.Jump = true end)
+            end
 
         else
             -- === PATH: belum dalam kendaraan, spawn dulu ===
@@ -1309,54 +1313,59 @@ btnCtThrow.MouseButton1Click:Connect(function()
                 ctStatus.Text = "gagal masuk veh!"
                 ctStatus.TextColor3 = Color3.fromRGB(255,90,90)
                 showNotif("Gagal masuk Bus!", false)
-                goto ctCleanup
-            end
+                throwOk = false
+            else
+                ctStatus.Text = "duduk ✓ - spinning..."
+                ctStatus.TextColor3 = C.TextGreen
+                task.wait(0.3)
 
-            ctStatus.Text = "duduk ✓ - tp ke target..."
-            ctStatus.TextColor3 = C.TextGreen
-            task.wait(0.3)
-
-            -- Teleport ke target sambil spin realtime selama 2 detik
-            ctStatus.Text = "spinning di target..."
-            local spinStart = tick()
-            local spinAngle = 0
-            local SPIN_SPEED = math.pi * 20 -- super cepat
-            while tick() - spinStart < 2 do
-                local tC = target.Character
-                local th  = tC and tC:FindFirstChild("HumanoidRootPart")
-                if th then
-                    spinAngle = spinAngle + SPIN_SPEED * (1/60)
-                    pcall(function()
-                        myHRP.CFrame = CFrame.new(th.Position) * CFrame.Angles(0, spinAngle, 0)
-                    end)
+                -- Spin realtime selama 2 detik ngikutin target
+                ctStatus.Text = "spinning di target..."
+                local spinStart = tick()
+                local spinAngle = 0
+                local SPIN_SPEED = math.pi * 20
+                while tick() - spinStart < 2 do
+                    local tC3 = target.Character
+                    local th   = tC3 and tC3:FindFirstChild("HumanoidRootPart")
+                    if th then
+                        spinAngle = spinAngle + SPIN_SPEED * (1/60)
+                        pcall(function()
+                            myHRP.CFrame = CFrame.new(th.Position) * CFrame.Angles(0, spinAngle, 0)
+                        end)
+                    end
+                    task.wait(1/60)
                 end
-                task.wait(1/60)
+
+                -- Turun 100 stud
+                ctStatus.Text = "turun 100..."
+                pcall(function() myHRP.CFrame = myHRP.CFrame + Vector3.new(0, -100, 0) end)
+                task.wait(1)
+
+                -- Hapus kendaraan
+                ctStatus.Text = "hapus veh..."
+                pcall(function() ReplicatedStorage.RE["1Ca1r"]:FireServer("DeleteAllVehicles") end)
+                task.wait(0.3)
             end
-
-            -- Turun 100 stud
-            ctStatus.Text = "turun 100..."
-            pcall(function() myHRP.CFrame = myHRP.CFrame + Vector3.new(0, -100, 0) end)
-            task.wait(1) -- delay 1 detik
-
-            -- Hapus kendaraan
-            ctStatus.Text = "hapus veh..."
-            pcall(function() ReplicatedStorage.RE["1Ca1r"]:FireServer("DeleteAllVehicles") end)
-            task.wait(0.3)
         end
 
-        -- Kembali ke posisi semula
-        ctStatus.Text = "kembali ke pos..."
-        pcall(function() myHRP.CFrame = originalCF end)
-        task.wait(0.06)
-        pcall(function() myHRP.CFrame = originalCF end)
+        -- Kembali ke posisi semula (selalu, terlepas throwOk atau tidak)
+        if throwOk then
+            ctStatus.Text = "kembali ke pos..."
+            showNotif("Car Throw selesai!", true)
+        end
+        myChar = LocalPlayer.Character
+        myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if myHRP then
+            pcall(function() myHRP.CFrame = originalCF end)
+            task.wait(0.06)
+            pcall(function() myHRP.CFrame = originalCF end)
+        end
 
-        ::ctCleanup::
         isCarThrowing = false
         btnCtThrow.BackgroundColor3 = Color3.fromRGB(170, 60, 10)
         btnCtThrow.Text = "car throw"
         ctStatus.Text = ctSelectedPlayer and ("target: " .. ctSelectedPlayer.Name) or "select player dulu"
         ctStatus.TextColor3 = ctSelectedPlayer and C.TextYellow or C.TextDim
-        showNotif("Car Throw selesai!", true)
     end)
 end)
 
