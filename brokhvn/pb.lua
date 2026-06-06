@@ -1,6 +1,7 @@
 -- ══════════════════════════════════════
 --   Tent Orbit v4  |  by BmSky
 --   Perbaikan: refresh tenda setiap aktivasi, validasi real-time
+--   ++ Auto-detect player name (tidak perlu ganti manual)
 -- ══════════════════════════════════════
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -18,7 +19,7 @@ local orbitAngle = 0
 local ORBIT_RADIUS = 8
 local ORBIT_SPEED = 1.2
 local TOTAL_TENTS = 2               -- jumlah total tenda yang diinginkan
-local PLAYER_NAME = "BimaSky77"    -- ganti dengan username kamu
+local PLAYER_NAME = LocalPlayer.Name  -- 🔁 otomatis ambil nama player
 
 -- Path ke folder
 local wsCom = workspace:FindFirstChild("WorkspaceCom")
@@ -511,4 +512,4 @@ LocalPlayer.CharacterAdded:Connect(function()
     end
 end)
 
-print("[OK] Tent Orbit v4 loaded – perbaikan aktivasi ulang & validasi")
+print("[OK] Tent Orbit v4 loaded – auto detect player name")
