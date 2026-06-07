@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════
---   Tent Orbit v6.1 | by BmSky
+--   Tent Orbit v6.3 | by BmSky
 --   + Input Sign ID di panel Bahlil
 -- ══════════════════════════════════════
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -35,7 +35,7 @@ local verticalMove     = 0
 -- Minimize
 local isMinimized  = false
 local PANEL_W      = 230
-local PANEL_H_FULL = 260
+local PANEL_H_FULL = 244
 local PANEL_H_MIN  = 26
 
 -- List Action popup
@@ -55,16 +55,20 @@ local bahlilSignID     = "21"    -- ⬅️ UBAH ID DI PANEL, BUKAN DI SINI
 local bahlilInputRows  = {}
 local bahlilHistSelIdx = 1
 
--- Menyebar state
-local menyebarTargets   = {}
-local menyebarSwapTimer = 0
-local menyebarAngle     = 0
+-- ── Another Player state ─────────────
+local targetPlayer      = nil
+local apPanelOpen       = false
+local apActionOpen      = false
 
--- Arus state
-local arusOffset = 0
+-- Auto RGB state
+local autoRGBActive  = false
+local autoRGBConn    = nil
+local autoRGBHue     = 0   -- 0..1, berputar
 
--- Loading state
-local loadingTime = 0
+-- Forward declarations
+local restartMode, stopLoop, startLoop, closeApPanel, setButtonStates, stopAutoRGB
+local isSpektating = false
+local stopSpektator
 
 -- Path tenda
 local wsCom        = workspace:FindFirstChild("WorkspaceCom")
@@ -84,6 +88,11 @@ local function getHumanoid()
 end
 local function getTargetPosition()
     if ballFollowActive and ball and ball.Parent then return ball.Position end
+    if targetPlayer and targetPlayer.Parent then
+        local char = targetPlayer.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then return hrp.Position end
+    end
     local hrp = getHRP(); return hrp and hrp.Position
 end
 
@@ -137,7 +146,7 @@ panelStroke.Color = Color3.fromRGB(90,60,200); panelStroke.Thickness = 1.4
 local header = Instance.new("TextButton", panel)
 header.Size             = UDim2.new(1, 0, 0, 26)
 header.BackgroundColor3 = Color3.fromRGB(28, 20, 55)
-header.Text             = "  ▼  Tent Orbit v6  |  BmSky"
+header.Text = "  ▼  Tent Orbit v6.3  |  BmSky"
 header.TextColor3       = Color3.fromRGB(200, 180, 255)
 header.Font             = Enum.Font.GothamBold
 header.TextSize         = 11
@@ -167,7 +176,7 @@ header.MouseButton1Click:Connect(function()
     if isDragging then isDragging=false; return end
     isMinimized = not isMinimized
     local h = isMinimized and PANEL_H_MIN or PANEL_H_FULL
-    header.Text = string.format("  %s  Tent Orbit v6  |  BmSky", isMinimized and "▶" or "▼")
+    header.Text = string.format("  %s  Tent Orbit v6.3  |  BmSky", isMinimized and "▶" or "▼")
     TweenService:Create(panel, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
         { Size = UDim2.new(0, PANEL_W, 0, h) }):Play()
 end)
@@ -290,28 +299,68 @@ sep3.BackgroundColor3=Color3.fromRGB(60,50,90); sep3.BorderSizePixel=0
 local btnBallFollow = makeBtn("● Ball Follow: OFF", 8, 182, PANEL_W-16, 24)
 btnBallFollow.BackgroundColor3 = Color3.fromRGB(38,36,58)
 
-local btnUp   = makeBtn("▲ Naik",  8,   210, (PANEL_W-20)/2, 22)
-local btnDown = makeBtn("▼ Turun", 10+(PANEL_W-20)/2, 210, (PANEL_W-20)/2, 22)
-btnUp.BackgroundColor3   = Color3.fromRGB(20,110,40)
-btnDown.BackgroundColor3 = Color3.fromRGB(120,30,30)
-btnUp.Visible   = false
-btnDown.Visible = false
+local btnAnotherPlayer = makeBtn("👤 Another Player", 8, 210, PANEL_W-16, 24)
+btnAnotherPlayer.BackgroundColor3 = Color3.fromRGB(30, 60, 120)
+local apStroke = Instance.new("UIStroke", btnAnotherPlayer)
+apStroke.Color = Color3.fromRGB(60,130,220); apStroke.Thickness = 1
+
+-- ── Tombol AUTO RGB ───────────────────
+local btnAutoRGB = makeBtn("🌈 Auto RGB: OFF", 8, 238, PANEL_W-16, 24)
+btnAutoRGB.BackgroundColor3 = Color3.fromRGB(35, 30, 60)
+local argbStroke = Instance.new("UIStroke", btnAutoRGB)
+argbStroke.Color = Color3.fromRGB(150, 60, 220); argbStroke.Thickness = 1
+
+-- ── Tombol Naik/Turun FLOATING ────────────
+local BTN_CORNER_W = 52
+local BTN_CORNER_H = 36
+local BTN_CORNER_MARGIN = 12
+
+local floatBtnUp = Instance.new("TextButton", gui)
+floatBtnUp.Size             = UDim2.new(0, BTN_CORNER_W, 0, BTN_CORNER_H)
+floatBtnUp.Position         = UDim2.new(1, -(BTN_CORNER_W + BTN_CORNER_MARGIN), 1, -(BTN_CORNER_H*2 + BTN_CORNER_MARGIN + 6))
+floatBtnUp.BackgroundColor3 = Color3.fromRGB(20, 110, 40)
+floatBtnUp.Text             = "+"
+floatBtnUp.TextColor3       = Color3.new(1,1,1)
+floatBtnUp.Font             = Enum.Font.GothamBold
+floatBtnUp.TextSize         = 22
+floatBtnUp.AutoButtonColor  = false
+floatBtnUp.ZIndex           = 50
+floatBtnUp.Visible          = false
+Instance.new("UICorner", floatBtnUp).CornerRadius = UDim.new(0, 8)
+local fuStroke = Instance.new("UIStroke", floatBtnUp)
+fuStroke.Color = Color3.fromRGB(40,200,80); fuStroke.Thickness = 1.5
+
+local floatBtnDown = Instance.new("TextButton", gui)
+floatBtnDown.Size             = UDim2.new(0, BTN_CORNER_W, 0, BTN_CORNER_H)
+floatBtnDown.Position         = UDim2.new(1, -(BTN_CORNER_W + BTN_CORNER_MARGIN), 1, -(BTN_CORNER_H + BTN_CORNER_MARGIN))
+floatBtnDown.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
+floatBtnDown.Text             = "−"
+floatBtnDown.TextColor3       = Color3.new(1,1,1)
+floatBtnDown.Font             = Enum.Font.GothamBold
+floatBtnDown.TextSize         = 22
+floatBtnDown.AutoButtonColor  = false
+floatBtnDown.ZIndex           = 50
+floatBtnDown.Visible          = false
+Instance.new("UICorner", floatBtnDown).CornerRadius = UDim.new(0, 8)
+local fdStroke = Instance.new("UIStroke", floatBtnDown)
+fdStroke.Color = Color3.fromRGB(200,60,60); fdStroke.Thickness = 1.5
+
+local btnUp   = floatBtnUp
+local btnDown = floatBtnDown
 
 -- ══════════════════════════════════════
 --   LIST ACTION POPUP
 -- ══════════════════════════════════════
 local MODES = {
     { id="orbit",     label="⊙ Orbit",      color=Color3.fromRGB(80,50,180)   },
-    { id="follow",    label="➤ Follow",      color=Color3.fromRGB(50,90,180)   },
     { id="leftright", label="↔ L-Right",     color=Color3.fromRGB(50,140,180)  },
     { id="love",      label="♥ Love",        color=Color3.fromRGB(200,40,100)  },
-    { id="road",      label="▤ Road",        color=Color3.fromRGB(60,130,60)   },
-    { id="dna",       label="⬡ DNA",         color=Color3.fromRGB(0,160,160)   },
-    { id="snake",     label="~ Snake",       color=Color3.fromRGB(30,180,80)   },
     { id="tornado",   label="@ Tornado",     color=Color3.fromRGB(100,100,200) },
-    { id="menyebar",  label="✦ Menyebar",    color=Color3.fromRGB(150,50,200)  },
-    { id="arus",      label="≈ Arus",         color=Color3.fromRGB(0,160,210)   },
-    { id="loading",   label="⬤ Loading",     color=Color3.fromRGB(180,150,0)   },
+    { id="ekor",      label="🐍 Ekor",        color=Color3.fromRGB(60,160,80)   },
+    { id="games",     label="🎮 Games",       color=Color3.fromRGB(200,140,20)  },
+    { id="wings",     label="🦋 Wings",       color=Color3.fromRGB(80,180,220)  },
+    { id="mahkota",   label="👑 Mahkota",     color=Color3.fromRGB(220,180,20)  },
+    { id="bodyside",  label="⬛ Body Side",   color=Color3.fromRGB(140,80,200)  },
     { id="bahlil",    label="😎 Bahlil",      color=Color3.fromRGB(200,100,0), special=true },
 }
 
@@ -420,7 +469,7 @@ end)
 -- ══════════════════════════════════════
 --   BUTTON STATES
 -- ══════════════════════════════════════
-local function setButtonStates()
+setButtonStates = function()
     for _, m in ipairs(MODES) do
         local mb = modeBtns[m.id]
         if mb then
@@ -444,14 +493,27 @@ local function setButtonStates()
     btnBallFollow.BackgroundColor3 = ballFollowActive
         and Color3.fromRGB(20,150,60) or Color3.fromRGB(38,36,58)
     btnBallFollow.Text = (ballFollowActive and "● Ball Follow: ON" or "● Ball Follow: OFF")
-    btnUp.Visible   = ballFollowActive
-    btnDown.Visible = ballFollowActive
+    floatBtnUp.Visible   = ballFollowActive
+    floatBtnDown.Visible = ballFollowActive
+    if targetPlayer and targetPlayer.Parent then
+        btnAnotherPlayer.BackgroundColor3 = Color3.fromRGB(20,80,180)
+        btnAnotherPlayer.Text = "👤 " .. targetPlayer.Name
+    else
+        btnAnotherPlayer.BackgroundColor3 = Color3.fromRGB(30,60,120)
+        btnAnotherPlayer.Text = "👤 Another Player"
+    end
 
-    PANEL_H_FULL = 260
+    PANEL_H_FULL = 270
     if not isMinimized then
         TweenService:Create(panel, TweenInfo.new(0.1),
             { Size = UDim2.new(0, PANEL_W, 0, PANEL_H_FULL) }):Play()
     end
+
+    btnAutoRGB.BackgroundColor3 = autoRGBActive
+        and Color3.fromRGB(120,20,180) or Color3.fromRGB(35,30,60)
+    btnAutoRGB.Text = autoRGBActive and "🌈 Auto RGB: ON" or "🌈 Auto RGB: OFF"
+    argbStroke.Color = autoRGBActive
+        and Color3.fromRGB(255,100,255) or Color3.fromRGB(150,60,220)
 
     if currentMode ~= "none" then
         btnListAction.Text = "☰  " .. currentMode:upper() .. " aktif"
@@ -554,20 +616,6 @@ local function updateOrbit(dt)
     end
 end
 
--- FOLLOW
-local function updateFollow(dt)
-    local hrp = getHRP(); local tp = getTargetPosition()
-    if not hrp or not tp then return end
-    local look = hrp.CFrame.LookVector
-    local base = tp + look*(-4)
-    for i = #tentFolders, 1, -1 do
-        local off = (i-1)*3
-        if not setCF(tentFolders[i], CFrame.new(base.X+look.X*(-off), base.Y+HEIGHT_OFFSET, base.Z+look.Z*(-off))) then
-            table.remove(tentFolders,i)
-        end
-    end
-end
-
 -- LEFT-RIGHT
 local function updateLeftRight(dt)
     local hrp = getHRP(); local tp = getTargetPosition()
@@ -599,69 +647,6 @@ local function updateLove(dt)
     end
 end
 
--- ROAD
-local roadOffset = 0
-local function updateRoad(dt)
-    roadOffset = roadOffset + ORBIT_SPEED*8*dt
-    local hrp = getHRP(); local tp = getTargetPosition()
-    if not hrp or not tp then return end
-    local look  = hrp.CFrame.LookVector
-    local right = hrp.CFrame.RightVector
-    local n     = #tentFolders
-    local half  = math.floor(n/2)
-    for i = #tentFolders, 1, -1 do
-        local side    = (i <= half) and 1 or -1
-        local row     = i <= half and i or (i - half)
-        local fwdOff  = (row - 1)*4 - roadOffset%4
-        local sideOff = side * ORBIT_RADIUS * 0.7
-        local pos = tp + look*fwdOff + right*sideOff
-        if not setCF(tentFolders[i], CFrame.new(pos.X, tp.Y+HEIGHT_OFFSET, pos.Z)) then
-            table.remove(tentFolders,i)
-        end
-    end
-end
-
--- DNA
-local dnaAngle = 0
-local function updateDNA(dt)
-    dnaAngle = (dnaAngle + ORBIT_SPEED*dt) % (math.pi*2)
-    local hrp = getHRP(); local tp = getTargetPosition()
-    if not hrp or not tp then return end
-    local look  = hrp.CFrame.LookVector
-    local right = hrp.CFrame.RightVector
-    local n     = #tentFolders
-    for i = #tentFolders, 1, -1 do
-        local t2      = dnaAngle + (i-1)*(math.pi*2/math.max(n,1))
-        local strand  = (i % 2 == 0) and 1 or -1
-        local fwdOff  = (i - n/2)*2.5
-        local sideOff = strand * math.cos(t2) * ORBIT_RADIUS
-        local upOff   = math.sin(t2) * ORBIT_RADIUS * 0.5
-        local pos = tp + look*fwdOff + right*sideOff
-        if not setCF(tentFolders[i], CFrame.new(pos.X, tp.Y+HEIGHT_OFFSET+upOff, pos.Z)) then
-            table.remove(tentFolders,i)
-        end
-    end
-end
-
--- SNAKE
-local snakeTime = 0
-local function updateSnake(dt)
-    snakeTime = snakeTime + dt
-    local hrp = getHRP(); local tp = getTargetPosition()
-    if not hrp or not tp then return end
-    local look  = hrp.CFrame.LookVector
-    local right = hrp.CFrame.RightVector
-    local n     = #tentFolders
-    for i = #tentFolders, 1, -1 do
-        local fwdOff  = -(i * 2.5)
-        local zigzag  = math.sin(snakeTime * ORBIT_SPEED*2 + i*0.9) * ORBIT_RADIUS * 0.6
-        local pos = tp + look*fwdOff + right*zigzag
-        if not setCF(tentFolders[i], CFrame.new(pos.X, tp.Y+HEIGHT_OFFSET, pos.Z)) then
-            table.remove(tentFolders,i)
-        end
-    end
-end
-
 -- TORNADO
 local tornadoAngle = 0
 local function updateTornado(dt)
@@ -682,104 +667,471 @@ local function updateTornado(dt)
 end
 
 -- ══════════════════════════════════════
---   [NEW] MENYEBAR – scatter + swap
+--   EKOR – rantai ekor ular sejati
+--   Node disimpan dalam "history" posisi player tiap tick
+--   Tiap tenda ikut posisi history N*spacing detik lalu
 -- ══════════════════════════════════════
-local function updateMenyebar(dt)
-    menyebarAngle     = (menyebarAngle + ORBIT_SPEED * 0.4 * dt) % (math.pi*2)
-    menyebarSwapTimer = menyebarSwapTimer + dt
-    local tp = getTargetPosition(); if not tp then return end
-    local n  = #tentFolders
+local ekorHistory    = {}   -- {pos=Vector3, t=number} posisi HRP tiap frame
+local EKOR_HIST_MAX  = 600  -- simpan max 600 titik
 
-    if #menyebarTargets ~= n then
-        menyebarTargets = {}
-        for i = 1, n do
-            menyebarTargets[i] = (i-1) * (math.pi*2 / math.max(n,1))
-        end
-    end
-
-    local swapInterval = math.max(0.25, 1.1 / ORBIT_SPEED)
-    if menyebarSwapTimer >= swapInterval then
-        menyebarSwapTimer = 0
-        if n >= 2 then
-            local a = math.random(1, n)
-            local b = math.random(1, n)
-            while b == a do b = math.random(1, n) end
-            menyebarTargets[a], menyebarTargets[b] = menyebarTargets[b], menyebarTargets[a]
-        end
-    end
-
-    for i = #tentFolders, 1, -1 do
-        local ang = menyebarTargets[i] + menyebarAngle
-        local r = ORBIT_RADIUS * (1.3 + 0.5 * math.sin(ang*2 + i*1.7))
-        local x = tp.X + math.cos(ang) * r
-        local z = tp.Z + math.sin(ang) * r
-        if not setCF(tentFolders[i], CFrame.new(x, tp.Y+HEIGHT_OFFSET, z)) then
-            table.remove(tentFolders, i)
-            table.remove(menyebarTargets, i)
-        end
-    end
-end
-
--- ══════════════════════════════════════
---   [NEW] ARUS – flowing wave current
--- ══════════════════════════════════════
-local function updateArus(dt)
-    arusOffset = arusOffset + ORBIT_SPEED * 2.5 * dt
-    local hrp = getHRP(); local tp = getTargetPosition()
-    if not hrp or not tp then return end
-    local look  = hrp.CFrame.LookVector
-    local right = hrp.CFrame.RightVector
-    local n = #tentFolders
-    for i = #tentFolders, 1, -1 do
-        local phase  = (i-1) * (math.pi*2 / math.max(n,1))
-        local wave1  = math.sin(arusOffset + phase)
-        local wave2  = math.cos(arusOffset * 0.7 + phase * 1.5)
-        local upWave = math.sin(arusOffset * 1.3 + phase * 0.8)
-        local fwdOff  = wave1  * ORBIT_RADIUS * 0.9
-        local sideOff = wave2  * ORBIT_RADIUS * 0.7
-        local upOff   = upWave * ORBIT_RADIUS * 0.25
-        local pos = tp + look*fwdOff + right*sideOff
-        if not setCF(tentFolders[i], CFrame.new(pos.X, tp.Y+HEIGHT_OFFSET+upOff, pos.Z)) then
-            table.remove(tentFolders, i)
-        end
-    end
-end
-
--- ══════════════════════════════════════
---   [NEW] LOADING – antrian kanan→kiri loop
--- ══════════════════════════════════════
-local function updateLoading(dt)
-    loadingTime = loadingTime + dt
-    local tp  = getTargetPosition()
+local function updateEkor(dt)
     local hrp = getHRP()
-    if not tp or not hrp then return end
-    local right = hrp.CFrame.RightVector
+    if not hrp then return end
+
     local n = #tentFolders
     if n == 0 then return end
 
-    local period     = math.max(0.18, 0.75 / ORBIT_SPEED)
-    local totalCycle = 2 * n * period
-    local t = loadingTime % totalCycle
+    -- Rekam posisi player setiap frame
+    local now = os.clock()
+    local hrpPos = hrp.Position + Vector3.new(0, HEIGHT_OFFSET, 0)
+    table.insert(ekorHistory, 1, { pos=hrpPos, t=now })
+    -- Buang history lama
+    while #ekorHistory > EKOR_HIST_MAX do
+        table.remove(ekorHistory)
+    end
+
+    if #ekorHistory < 2 then return end
+
+    -- Jarak antar node ekor
+    local spacing = math.max(1.5, ORBIT_RADIUS * 0.5)
+
+    -- Tiap tenda = ambil titik dari history yang akumulasi jaraknya = i * spacing
+    for i = 1, n do
+        local f = tentFolders[n - i + 1]   -- tenda 1 paling dekat, n paling jauh
+        if not f or not f.Parent then
+            table.remove(tentFolders, n - i + 1)
+            break
+        end
+
+        -- Cari titik di history yg jaraknya sekitar i*spacing dari player
+        local targetDist = i * spacing
+        local accDist    = 0
+        local targetPos  = ekorHistory[#ekorHistory].pos  -- fallback: ujung history
+
+        for h = 1, #ekorHistory - 1 do
+            local segDist = (ekorHistory[h].pos - ekorHistory[h+1].pos).Magnitude
+            if accDist + segDist >= targetDist then
+                -- Interpolasi dalam segmen ini
+                local frac = (targetDist - accDist) / math.max(segDist, 0.001)
+                targetPos = ekorHistory[h].pos:Lerp(ekorHistory[h+1].pos, frac)
+                break
+            end
+            accDist = accDist + segDist
+        end
+
+        -- Animasi gelombang ular: sedikit oscillate kiri-kanan
+        local waveAmp   = ORBIT_RADIUS * 0.18
+        local waveFreq  = ORBIT_SPEED * 3
+        local phase     = now * waveFreq - i * 0.5
+        local rightVec  = hrp.CFrame.RightVector
+        local waveOff   = rightVec * math.sin(phase) * waveAmp
+
+        local finalPos = Vector3.new(
+            targetPos.X + waveOff.X,
+            targetPos.Y,
+            targetPos.Z + waveOff.Z
+        )
+        setCF(f, CFrame.new(finalPos.X, finalPos.Y, finalPos.Z))
+    end
+end
+
+-- ══════════════════════════════════════
+--   MAHKOTA – semua prop numpuk tepat 2 stud di atas kepala player
+--   Cari Head part player (atau HRP sebagai fallback)
+--   Animasi: tiap prop berputar kecil di sekitar pusat mahkota
+-- ══════════════════════════════════════
+local mahkotaAngle = 0
+
+local function getMahkotaCenter()
+    local char = nil
+    if targetPlayer and targetPlayer.Parent then
+        char = targetPlayer.Character
+    else
+        char = LocalPlayer.Character
+    end
+    if not char then return nil end
+    -- Cari Head part
+    local head = char:FindFirstChild("Head")
+    if head and head:IsA("BasePart") then
+        return head.Position + Vector3.new(0, head.Size.Y * 0.5 + 2, 0)
+    end
+    -- Fallback ke HRP
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then return hrp.Position + Vector3.new(0, 3.5 + HEIGHT_OFFSET, 0) end
+    return nil
+end
+
+local function updateMahkota(dt)
+    mahkotaAngle = (mahkotaAngle + ORBIT_SPEED * 1.5 * dt) % (math.pi * 2)
+    local center = getMahkotaCenter()
+    if not center then return end
+
+    local n = #tentFolders
+    if n == 0 then return end
+
+    -- Semua prop berputar pelan di atas kepala (orbit kecil biar kelihatan semua)
+    local crownR = math.min(ORBIT_RADIUS * 0.25, 1.2)  -- radius kecil = numpuk tapi sedikit berputar
+
+    for i = #tentFolders, 1, -1 do
+        local f = tentFolders[i]
+        if not f or not f.Parent then
+            table.remove(tentFolders, i)
+        else
+            local a  = mahkotaAngle + (i - 1) * (math.pi * 2 / n)
+            local bx = center.X + math.cos(a) * crownR
+            local bz = center.Z + math.sin(a) * crownR
+            -- Sedikit tumpuk tinggi per prop (biar ada kedalaman)
+            local yStack = (i - 1) * 0.1
+            setCF(f, CFrame.new(bx, center.Y + yStack, bz))
+        end
+    end
+end
+
+-- ══════════════════════════════════════
+--   BODY SIDE – prop kiri 5 stud & kanan 5 stud
+--   Satu-satu bergerak: orbit 3x → atas kepala → terbang ke sisi tujuan
+--   Prop berikutnya HANYA bergerak setelah prop sebelumnya SELESAI + delay 3-4 detik
+-- ══════════════════════════════════════
+local bodySideSides     = {}   -- 1=kanan, -1=kiri per tenda
+local bodySidePositions = {}   -- posisi lerp per tenda
+local bodySideActive    = nil  -- index tenda yang lagi transit (nil = semua idle)
+local bodySideOrbitState= nil  -- state animasi transit
+local bodySideIdleTimer = 0    -- timer idle antar transit
+local bodySideIdleDelay = 3.5  -- detik delay setelah 1 prop selesai
+
+local BODY_DIST   = 5
+local BODY_ORBITS = 3
+
+local function bodySideInitSides(n)
+    bodySideSides    = {}
+    bodySidePositions= {}
+    bodySideActive   = nil
+    bodySideOrbitState = nil
+    bodySideIdleTimer  = 0
+    local half = math.floor(n / 2)
+    for i = 1, n do
+        bodySideSides[i] = (i <= half) and 1 or -1
+    end
+end
+
+local function updateBodySide(dt)
+    local tp  = getTargetPosition(); if not tp then return end
+    local n   = #tentFolders
+    if n == 0 then return end
+
+    if #bodySideSides ~= n then bodySideInitSides(n) end
+
+    local lerpSp    = math.clamp(ORBIT_SPEED * 8 * dt, 0, 1)
+    local headCenter= getMahkotaCenter() or (tp + Vector3.new(0, 4.5, 0))
+
+    -- ── SEMUA TENDA: idle di posisinya ───
+    for i = 1, n do
+        local f = tentFolders[i]
+        if not f or not f.Parent then
+            -- Bersihkan
+            if bodySideActive == i then
+                bodySideActive = nil; bodySideOrbitState = nil; bodySideIdleTimer = 0
+            end
+            table.remove(tentFolders, i); table.remove(bodySideSides, i)
+            table.remove(bodySidePositions, i)
+            break
+        end
+
+        -- Tenda yg lagi transit: posisinya di-update di blok transit di bawah
+        if bodySideActive == i then continue end
+
+        -- Idle: lerp ke posisi sisi
+        local destPos = Vector3.new(tp.X + bodySideSides[i] * BODY_DIST, tp.Y + HEIGHT_OFFSET, tp.Z)
+        if not bodySidePositions[i] then bodySidePositions[i] = destPos end
+        bodySidePositions[i] = bodySidePositions[i]:Lerp(destPos, lerpSp)
+        setCF(f, CFrame.new(bodySidePositions[i].X, bodySidePositions[i].Y, bodySidePositions[i].Z))
+    end
+
+    -- ── ANIMASI TRANSIT ───────────────────
+    if bodySideActive then
+        local i   = bodySideActive
+        local st  = bodySideOrbitState
+        local f   = tentFolders[i]
+        if not f or not f.Parent then
+            bodySideActive = nil; bodySideOrbitState = nil; bodySideIdleTimer = 0
+        else
+            st.progress = st.progress + dt * ORBIT_SPEED * 0.55
+
+            local p   = st.progress
+            local pos
+
+            if p <= BODY_ORBITS then
+                -- Orbit 3x keliling player
+                local a      = st.startAngle + (p / BODY_ORBITS) * math.pi * 2 * BODY_ORBITS
+                local yRise  = (p / BODY_ORBITS) * 1.5
+                pos = Vector3.new(
+                    tp.X + math.cos(a) * ORBIT_RADIUS,
+                    tp.Y + HEIGHT_OFFSET + yRise,
+                    tp.Z + math.sin(a) * ORBIT_RADIUS
+                )
+                st.lastAngle = a
+
+            elseif p <= BODY_ORBITS + 0.6 then
+                -- Naik ke atas kepala
+                local t2      = (p - BODY_ORBITS) / 0.6
+                local exitPos = Vector3.new(
+                    tp.X + math.cos(st.lastAngle) * ORBIT_RADIUS,
+                    tp.Y + HEIGHT_OFFSET + 1.5,
+                    tp.Z + math.sin(st.lastAngle) * ORBIT_RADIUS
+                )
+                pos = exitPos:Lerp(headCenter, t2)
+
+            else
+                -- Terbang ke sisi tujuan
+                local t3     = math.min((p - BODY_ORBITS - 0.6) / 0.5, 1)
+                local destPos= Vector3.new(tp.X + st.toSide * BODY_DIST, tp.Y + HEIGHT_OFFSET, tp.Z)
+                pos = headCenter:Lerp(destPos, t3)
+
+                if t3 >= 1 then
+                    -- Selesai transit
+                    bodySideSides[i]     = st.toSide
+                    bodySidePositions[i] = destPos
+                    bodySideActive       = nil
+                    bodySideOrbitState   = nil
+                    bodySideIdleTimer    = 0   -- mulai hitung delay sebelum prop berikutnya
+                end
+            end
+
+            if pos then
+                if not bodySidePositions[i] then bodySidePositions[i] = pos end
+                bodySidePositions[i] = bodySidePositions[i]:Lerp(pos, math.min(lerpSp * 2, 1))
+                setCF(f, CFrame.new(bodySidePositions[i].X, bodySidePositions[i].Y, bodySidePositions[i].Z))
+            end
+        end
+    end
+
+    -- ── PILIH PROP BERIKUTNYA setelah delay ──
+    if not bodySideActive then
+        bodySideIdleTimer = bodySideIdleTimer + dt
+        local delay = math.max(2.0, bodySideIdleDelay / math.max(ORBIT_SPEED, 0.1))
+        if bodySideIdleTimer >= delay then
+            bodySideIdleTimer = 0
+            -- Cari 1 idle prop yang bisa pindah sisi
+            -- Ganti secara antrian: kanan ke kiri, lalu kiri ke kanan, bergantian
+            local candidates = {}
+            for i = 1, n do
+                table.insert(candidates, i)
+            end
+            -- Shuffle kecil, pilih 1
+            for k = #candidates, 2, -1 do
+                local j = math.random(1, k)
+                candidates[k], candidates[j] = candidates[j], candidates[k]
+            end
+
+            local chosen = candidates[1]
+            local fromSide = bodySideSides[chosen]
+            local toSide   = -fromSide
+            -- Hitung angle awal dari posisi idle prop ke orbit player
+            local idlePos = bodySidePositions[chosen] or Vector3.new(tp.X + fromSide * BODY_DIST, tp.Y, tp.Z)
+            local startA  = math.atan2(idlePos.Z - tp.Z, idlePos.X - tp.X)
+
+            bodySideActive     = chosen
+            bodySideOrbitState = {
+                progress   = 0,
+                fromSide   = fromSide,
+                toSide     = toSide,
+                startAngle = startA,
+                lastAngle  = startA,
+            }
+        end
+    end
+end
+
+-- ══════════════════════════════════════
+--   GAMES – dua orbit bulatan di kanan & kiri player
+--   Satu-satu tukar sisi (random pair swap) sambil orbit terus
+-- ══════════════════════════════════════
+local gamesAngle      = 0      -- sudut orbit utama (berputar terus)
+local gamesSwapTimer  = 0
+local gamesSwapDelay  = 1.4    -- detik antar swap
+local gamesSides      = {}     -- 1 = kanan, -1 = kiri, per tenda
+local gamesPositions  = {}     -- lerp positions
+
+local function gamesInitSides(n)
+    gamesSides    = {}
+    gamesPositions = {}
+    local half = math.floor(n / 2)
+    for i = 1, n do
+        gamesSides[i] = (i <= half) and 1 or -1
+    end
+end
+
+local function updateGames(dt)
+    local tp = getTargetPosition(); if not tp then return end
+    local n  = #tentFolders
+    if n == 0 then return end
+
+    if #gamesSides ~= n then gamesInitSides(n) end
+
+    -- Orbit angle berputar terus
+    gamesAngle = (gamesAngle + ORBIT_SPEED * dt) % (math.pi * 2)
+
+    local centerDist = ORBIT_RADIUS          -- jarak pusat orbit dari player
+    local orbitR     = ORBIT_RADIUS * 0.55   -- radius orbit bulatan di tiap sisi
+    local lerpSpeed  = math.clamp(ORBIT_SPEED * 7 * dt, 0, 1)
+
+    -- Hitung berapa tenda per sisi (real-time)
+    local countR, countL = 0, 0
+    for i = 1, n do
+        if gamesSides[i] == 1 then countR = countR + 1 else countL = countL + 1 end
+    end
+    local idxR, idxL = 0, 0
 
     for i = 1, n do
-        if i > #tentFolders then break end
-        local tent = tentFolders[i]
-        if not tent or not tent.Parent then
-            table.remove(tentFolders, i); break
+        local f = tentFolders[i]
+        if not f or not f.Parent then
+            table.remove(tentFolders, i)
+            table.remove(gamesSides, i)
+            table.remove(gamesPositions, i)
+            break
         end
 
-        local side
-        if t < n * period then
-            local frac = math.clamp((t - (i-1)*period) / period, 0, 1)
-            side = 1 - 2*frac
+        local side = gamesSides[i]  -- 1=kanan, -1=kiri
+        local memberIdx, memberCount
+        if side == 1 then
+            idxR = idxR + 1
+            memberIdx   = idxR
+            memberCount = countR
         else
-            local t2   = t - n * period
-            local frac = math.clamp((t2 - (i-1)*period) / period, 0, 1)
-            side = -1 + 2*frac
+            idxL = idxL + 1
+            memberIdx   = idxL
+            memberCount = countL
         end
 
-        local pos = tp + right * (side * ORBIT_RADIUS)
-        setCF(tent, CFrame.new(pos.X, tp.Y+HEIGHT_OFFSET, pos.Z))
+        -- Tiap tenda punya sudut orbit sendiri di dalam lingkaran sisinya
+        local angleOffset = (memberIdx - 1) * (math.pi * 2 / math.max(memberCount, 1))
+        local a = gamesAngle + angleOffset
+
+        -- Pusat orbit ada di kanan/kiri player
+        local cx = tp.X + side * centerDist
+        local cy = tp.Y + HEIGHT_OFFSET
+        local cz = tp.Z
+
+        -- Posisi di orbit bulatan itu
+        local targetPos = Vector3.new(
+            cx + math.cos(a) * orbitR,
+            cy + math.sin(a * 0.5) * (orbitR * 0.4),   -- sedikit naik-turun biar 3D
+            cz + math.sin(a) * orbitR
+        )
+
+        if not gamesPositions[i] then
+            gamesPositions[i] = targetPos
+        end
+        gamesPositions[i] = gamesPositions[i]:Lerp(targetPos, lerpSpeed)
+        local cp = gamesPositions[i]
+        setCF(f, CFrame.new(cp.X, cp.Y, cp.Z))
+    end
+
+    -- Swap: tiap delay, 1 tenda kanan + 1 tenda kiri tukar sisi barengan (random)
+    gamesSwapTimer = gamesSwapTimer + dt
+    local swapInterval = math.max(0.4, gamesSwapDelay / math.max(ORBIT_SPEED, 0.1))
+    if gamesSwapTimer >= swapInterval and n >= 2 then
+        gamesSwapTimer = 0
+        -- Kumpulkan index kanan dan kiri
+        local rightList, leftList = {}, {}
+        for i = 1, n do
+            if gamesSides[i] == 1 then
+                table.insert(rightList, i)
+            else
+                table.insert(leftList, i)
+            end
+        end
+        -- Swap 1 random dari kanan dengan 1 random dari kiri
+        if #rightList > 0 and #leftList > 0 then
+            local ri = rightList[math.random(1, #rightList)]
+            local li = leftList[math.random(1, #leftList)]
+            gamesSides[ri] = -1
+            gamesSides[li] =  1
+        end
+    end
+end
+
+-- ══════════════════════════════════════
+--   WINGS – sayap mengepak di kiri-kanan player
+--   Part tersusun kayak bulu sayap: semakin ke ujung makin naik
+--   Animasi mengepak: gelombang sinusoidal berjalan dari pangkal ke ujung
+-- ══════════════════════════════════════
+local wingsAngle   = 0   -- fase animasi kepak
+local wingsPositions = {}
+
+local function updateWings(dt)
+    local hrp = getHRP()
+    local tp  = getTargetPosition()
+    if not hrp or not tp then return end
+
+    local n = #tentFolders
+    if n == 0 then return end
+
+    wingsAngle = wingsAngle + ORBIT_SPEED * 2.2 * dt
+
+    local half   = math.ceil(n / 2)   -- separuh kanan, sisanya kiri
+    local lerpSp = math.clamp(ORBIT_SPEED * 9 * dt, 0, 1)
+
+    -- Ambil orientation player (XZ)
+    local rightVec = hrp.CFrame.RightVector
+    local upVec    = Vector3.new(0, 1, 0)
+    local backVec  = -hrp.CFrame.LookVector
+
+    -- Base sayap: 1 stud di belakang player
+    local wingBase = Vector3.new(
+        tp.X + backVec.X * 1,
+        tp.Y + HEIGHT_OFFSET,
+        tp.Z + backVec.Z * 1
+    )
+
+    -- Spread per bulu: jarak antar bulu di sepanjang sayap
+    local featherSpread = math.max(1.2, ORBIT_RADIUS * 0.45)
+
+    for i = #tentFolders, 1, -1 do
+        local f = tentFolders[i]
+        if not f or not f.Parent then
+            table.remove(tentFolders, i)
+            table.remove(wingsPositions, i)
+        else
+            -- Tentukan apakah ini sayap kanan (1..half) atau kiri (half+1..n)
+            local isRight = (i <= half)
+            local featherIdx  -- index bulu dari pangkal (1) ke ujung (half)
+            local sideSign    -- +1 kanan, -1 kiri
+            if isRight then
+                featherIdx = i
+                sideSign   = 1
+            else
+                featherIdx = i - half
+                sideSign   = -1
+            end
+
+            -- Posisi bulu: semakin ke ujung semakin ke samping DAN semakin naik
+            local t     = (featherIdx - 1) / math.max(half - 1, 1)  -- 0=pangkal, 1=ujung
+            local xOff  = sideSign * featherIdx * featherSpread
+            local yBase = t * t * ORBIT_RADIUS * 0.7   -- kurva naik kuadratik
+
+            -- Animasi kepak: gelombang berjalan dari pangkal ke ujung
+            -- Fase bergeser per bulu → efek ripple/wave
+            local phaseShift = t * math.pi * 1.4
+            local flapAmp    = ORBIT_RADIUS * 0.35 * (0.3 + t * 0.7)  -- ujung lebih lebar
+            local flapY      = math.sin(wingsAngle - phaseShift) * flapAmp
+
+            -- Sedikit gerakan depan-belakang (Z) juga biar 3D
+            local flapZ      = math.cos(wingsAngle - phaseShift) * flapAmp * 0.25
+
+            local targetPos = Vector3.new(
+                wingBase.X + rightVec.X * xOff + backVec.X * flapZ,
+                wingBase.Y + yBase + flapY,
+                wingBase.Z + rightVec.Z * xOff + backVec.Z * flapZ
+            )
+
+            if not wingsPositions[i] then
+                wingsPositions[i] = targetPos
+            end
+            wingsPositions[i] = wingsPositions[i]:Lerp(targetPos, lerpSp)
+            local cp = wingsPositions[i]
+            setCF(f, CFrame.new(cp.X, cp.Y, cp.Z))
+        end
     end
 end
 
@@ -788,37 +1140,36 @@ end
 -- ══════════════════════════════════════
 local modeUpdateFn = {
     orbit     = updateOrbit,
-    follow    = updateFollow,
     leftright = updateLeftRight,
     love      = updateLove,
-    road      = updateRoad,
-    dna       = updateDNA,
-    snake     = updateSnake,
     tornado   = updateTornado,
-    menyebar  = updateMenyebar,
-    arus      = updateArus,
-    loading   = updateLoading,
+    ekor      = updateEkor,
+    games     = updateGames,
+    wings     = updateWings,
+    mahkota   = updateMahkota,
+    bodyside  = updateBodySide,
 }
 
-local function startLoop()
+startLoop = function()
     if orbitConnection then return end
     orbitConnection = RunService.Heartbeat:Connect(function(dt)
         local fn = modeUpdateFn[currentMode]
         if fn then fn(dt) end
     end)
 end
-local function stopLoop()
+stopLoop = function()
     if orbitConnection then orbitConnection:Disconnect(); orbitConnection = nil end
 end
 
 local modeTentCount = {
-    orbit=2, follow=2, leftright=2,
-    love=8, road=6, dna=6, snake=8, tornado=8,
-    menyebar=8, arus=8, loading=8,
+    orbit=2, leftright=2,
+    love=8, tornado=8,
+    ekor=6, games=6, wings=8,
+    mahkota=4, bodyside=4,
 }
 
 -- ══════════════════════════════════════
---   [NEW] BAHLIL TEXT CYCLER (dengan Sign ID)
+--   BAHLIL TEXT CYCLER (dengan Sign ID)
 -- ══════════════════════════════════════
 local function getBahlilList()
     return (#bahlilTexts > 0) and bahlilTexts or bahlilDefault
@@ -847,10 +1198,10 @@ local function stopBahlilCycle()
 end
 
 -- ══════════════════════════════════════
---   [NEW] BAHLIL PANEL GUI (dengan Sign ID input)
+--   BAHLIL PANEL GUI
 -- ══════════════════════════════════════
 local BP_W   = 372
-local BP_H   = 325   -- dipertinggi untuk ID row
+local BP_H   = 325
 local BP_COL = 166
 
 local bahlilFrame = Instance.new("Frame", gui)
@@ -865,7 +1216,6 @@ Instance.new("UICorner", bahlilFrame).CornerRadius = UDim.new(0,10)
 local bpStroke = Instance.new("UIStroke", bahlilFrame)
 bpStroke.Color = Color3.fromRGB(200,100,0); bpStroke.Thickness = 1.6
 
--- ── Header Bahlil panel ───────────────
 local bpHeader = Instance.new("Frame", bahlilFrame)
 bpHeader.Size             = UDim2.new(1,0,0,28)
 bpHeader.BackgroundColor3 = Color3.fromRGB(35,20,5)
@@ -1107,7 +1457,6 @@ UIS.InputChanged:Connect(function(i)
 end)
 
 -- ── Bahlil Panel Logic ────────────────
-
 local function refreshBahlilHistory()
     for _, c in ipairs(bpHistScroll:GetChildren()) do
         if c:IsA("Frame") then c:Destroy() end
@@ -1225,7 +1574,7 @@ local function openBahlilPanel()
     addInputRow("")
     bahlilHistSelIdx = 1
     bpEditBox.Text   = ""
-    bpIdBox.Text = bahlilSignID   -- sync ID saat buka
+    bpIdBox.Text = bahlilSignID
     refreshBahlilHistory()
     local pp  = panel.AbsolutePosition
     local ps2 = panel.AbsoluteSize
@@ -1304,6 +1653,359 @@ bpBtnClose.MouseButton1Click:Connect(function()
 end)
 
 -- ══════════════════════════════════════
+--   ANOTHER PLAYER PANEL
+-- ══════════════════════════════════════
+local AP_W     = 170
+local AP_BTN_H = 26
+local AP_GAP   = 3
+
+local apFrame = Instance.new("Frame", gui)
+apFrame.Size             = UDim2.new(0, AP_W, 0, 320)
+apFrame.BackgroundColor3 = Color3.fromRGB(10, 14, 28)
+apFrame.BorderSizePixel  = 0
+apFrame.ZIndex           = 25
+apFrame.Visible          = false
+apFrame.ClipsDescendants = false
+Instance.new("UICorner", apFrame).CornerRadius = UDim.new(0,10)
+local apFrameStroke = Instance.new("UIStroke", apFrame)
+apFrameStroke.Color = Color3.fromRGB(60,130,220); apFrameStroke.Thickness = 1.4
+
+local apHeader = Instance.new("Frame", apFrame)
+apHeader.Size             = UDim2.new(1,0,0,26)
+apHeader.BackgroundColor3 = Color3.fromRGB(20,30,70)
+apHeader.BorderSizePixel  = 0
+apHeader.ZIndex           = 27
+Instance.new("UICorner", apHeader).CornerRadius = UDim.new(0,10)
+
+local apHeaderLbl = Instance.new("TextLabel", apHeader)
+apHeaderLbl.Size             = UDim2.new(1,-28,1,0)
+apHeaderLbl.Position         = UDim2.new(0,8,0,0)
+apHeaderLbl.BackgroundTransparency = 1
+apHeaderLbl.Text             = "👤 Players"
+apHeaderLbl.TextColor3       = Color3.fromRGB(120,180,255)
+apHeaderLbl.Font             = Enum.Font.GothamBold
+apHeaderLbl.TextSize         = 11
+apHeaderLbl.TextXAlignment   = Enum.TextXAlignment.Left
+apHeaderLbl.ZIndex           = 28
+
+local apBtnClose = Instance.new("TextButton", apHeader)
+apBtnClose.Size             = UDim2.new(0,20,0,20)
+apBtnClose.Position         = UDim2.new(1,-22,0,3)
+apBtnClose.BackgroundColor3 = Color3.fromRGB(160,30,30)
+apBtnClose.Text             = "✕"
+apBtnClose.TextColor3       = Color3.new(1,1,1)
+apBtnClose.Font             = Enum.Font.GothamBold
+apBtnClose.TextSize         = 10
+apBtnClose.AutoButtonColor  = false
+apBtnClose.ZIndex           = 28
+Instance.new("UICorner", apBtnClose).CornerRadius = UDim.new(0,4)
+
+local apDragging, apDragStart, apStartPos = false, nil, nil
+apHeader.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        apDragging = true; apDragStart = i.Position; apStartPos = apFrame.Position
+        i.Changed:Connect(function() if i.UserInputState == Enum.UserInputState.End then apDragging = false end end)
+    end
+end)
+UIS.InputChanged:Connect(function(i)
+    if apDragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+        local d = i.Position - apDragStart
+        apFrame.Position = UDim2.new(apStartPos.X.Scale, apStartPos.X.Offset+d.X, apStartPos.Y.Scale, apStartPos.Y.Offset+d.Y)
+    end
+end)
+
+local apInfoLbl = Instance.new("TextLabel", apFrame)
+apInfoLbl.Size             = UDim2.new(1,-8,0,14)
+apInfoLbl.Position         = UDim2.new(0,4,0,29)
+apInfoLbl.BackgroundTransparency = 1
+apInfoLbl.Text             = "Belum ada target"
+apInfoLbl.TextColor3       = Color3.fromRGB(160,200,255)
+apInfoLbl.Font             = Enum.Font.Gotham
+apInfoLbl.TextSize         = 9
+apInfoLbl.TextXAlignment   = Enum.TextXAlignment.Left
+apInfoLbl.TextTruncate     = Enum.TextTruncate.AtEnd
+apInfoLbl.ZIndex           = 26
+
+local btnSpektator = Instance.new("TextButton", apFrame)
+btnSpektator.Size             = UDim2.new(0.5,-6,0,26)
+btnSpektator.Position         = UDim2.new(0,4,0,45)
+btnSpektator.BackgroundColor3 = Color3.fromRGB(20,80,160)
+btnSpektator.Text             = "🎥 Spek"
+btnSpektator.TextColor3       = Color3.new(1,1,1)
+btnSpektator.Font             = Enum.Font.GothamBold
+btnSpektator.TextSize         = 10
+btnSpektator.AutoButtonColor  = false
+btnSpektator.ZIndex           = 27
+Instance.new("UICorner", btnSpektator).CornerRadius = UDim.new(0,6)
+
+local btnTPHim = Instance.new("TextButton", apFrame)
+btnTPHim.Size             = UDim2.new(0.5,-6,0,26)
+btnTPHim.Position         = UDim2.new(0.5,2,0,45)
+btnTPHim.BackgroundColor3 = Color3.fromRGB(140,60,0)
+btnTPHim.Text             = "⚡TP to Him"
+btnTPHim.TextColor3       = Color3.new(1,1,1)
+btnTPHim.Font             = Enum.Font.GothamBold
+btnTPHim.TextSize         = 10
+btnTPHim.AutoButtonColor  = false
+btnTPHim.ZIndex           = 27
+Instance.new("UICorner", btnTPHim).CornerRadius = UDim.new(0,6)
+
+local apSep = Instance.new("Frame", apFrame)
+apSep.Size             = UDim2.new(1,-16,0,1)
+apSep.Position         = UDim2.new(0,8,0,74)
+apSep.BackgroundColor3 = Color3.fromRGB(50,60,100)
+apSep.BorderSizePixel  = 0
+
+local apScroll = Instance.new("ScrollingFrame", apFrame)
+apScroll.Size                   = UDim2.new(1,-6,1,-78)
+apScroll.Position               = UDim2.new(0,3,0,78)
+apScroll.BackgroundTransparency = 1
+apScroll.BorderSizePixel        = 0
+apScroll.ScrollBarThickness     = 3
+apScroll.ScrollBarImageColor3   = Color3.fromRGB(60,130,220)
+apScroll.CanvasSize             = UDim2.new(0,0,0,0)
+apScroll.ZIndex                 = 26
+apScroll.ClipsDescendants       = true
+
+local function positionApPanelInitial()
+    local pp  = panel.AbsolutePosition
+    local ps2 = panel.AbsoluteSize
+    local sx  = workspace.CurrentCamera.ViewportSize.X
+    local sy  = workspace.CurrentCamera.ViewportSize.Y
+    local px  = math.clamp(pp.X + ps2.X + 8, 4, sx - AP_W - 4)
+    local py  = math.clamp(pp.Y, 4, sy - apFrame.AbsoluteSize.Y - 4)
+    apFrame.Position = UDim2.new(0, px, 0, py)
+end
+
+local apPlayerBtns = {}
+
+local function clearApList()
+    for _, e in ipairs(apPlayerBtns) do e.btn:Destroy() end
+    apPlayerBtns = {}
+end
+
+local function buildApList()
+    clearApList()
+    local plrs = Players:GetPlayers()
+    local yy   = 2
+    local ROW  = AP_BTN_H + AP_GAP
+    for _, plr in ipairs(plrs) do
+        if plr == LocalPlayer then continue end
+        local btn = Instance.new("TextButton", apScroll)
+        btn.Size             = UDim2.new(1,-6,0,AP_BTN_H)
+        btn.Position         = UDim2.new(0,3,0,yy)
+        btn.BackgroundColor3 = (targetPlayer == plr) and Color3.fromRGB(30,90,180) or Color3.fromRGB(28,32,52)
+        btn.Text             = plr.Name
+        btn.TextColor3       = Color3.new(1,1,1)
+        btn.Font             = Enum.Font.Gotham
+        btn.TextSize         = 10
+        btn.AutoButtonColor  = false
+        btn.TextTruncate     = Enum.TextTruncate.AtEnd
+        btn.ZIndex           = 27
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,5)
+
+        local entry = { btn=btn, playerObj=plr }
+        table.insert(apPlayerBtns, entry)
+
+        btn.MouseButton1Click:Connect(function()
+            if isSpektating then stopSpektator() end
+            if targetPlayer == plr then
+                -- Unselect: kembalikan ke player sendiri
+                targetPlayer = nil
+                apInfoLbl.Text = "Target: dirimu sendiri"
+                lblStatus.Text = "Target: kembali ke player sendiri"
+            else
+                targetPlayer = plr
+                apInfoLbl.Text = "Target: " .. plr.Name
+                lblStatus.Text = "Target: " .. plr.Name
+            end
+            for _, e in ipairs(apPlayerBtns) do
+                e.btn.BackgroundColor3 = (e.playerObj == targetPlayer)
+                    and Color3.fromRGB(30,90,180) or Color3.fromRGB(28,32,52)
+            end
+            if currentMode ~= "none" then restartMode() end
+            setButtonStates()
+        end)
+
+        yy = yy + ROW
+    end
+    apScroll.CanvasSize = UDim2.new(0,0,0, yy + 2)
+end
+
+local function openApPanel()
+    apPanelOpen = true
+    buildApList()
+    if isSpektating then
+        btnSpektator.BackgroundColor3 = Color3.fromRGB(180,30,30)
+        btnSpektator.Text = "⏹ Stop Spek"
+    else
+        btnSpektator.BackgroundColor3 = Color3.fromRGB(20,80,160)
+        btnSpektator.Text = "🎥 Spek"
+    end
+    if targetPlayer and targetPlayer.Parent then
+        apInfoLbl.Text = "Target: " .. targetPlayer.Name
+    else
+        apInfoLbl.Text = "Belum ada target"
+    end
+    if not apFrame.Visible then
+        positionApPanelInitial()
+    end
+    apFrame.Visible = true
+end
+
+closeApPanel = function()
+    apPanelOpen = false
+    apFrame.Visible = false
+end
+
+apBtnClose.MouseButton1Click:Connect(function()
+    closeApPanel()
+end)
+
+Players.PlayerAdded:Connect(function()
+    if apPanelOpen then buildApList() end
+end)
+Players.PlayerRemoving:Connect(function(plr)
+    if targetPlayer == plr then
+        targetPlayer = nil
+        apInfoLbl.Text = "Target keluar!"
+        if isSpektating then stopSpektator() end
+        stopLoop()
+        currentMode = "none"
+        setButtonStates()
+        lblStatus.Text = "Target player keluar"
+    end
+    if apPanelOpen then buildApList() end
+end)
+
+stopSpektator = function()
+    isSpektating = false
+    Camera.CameraSubject = getHumanoid()
+    btnSpektator.BackgroundColor3 = Color3.fromRGB(20,80,160)
+    btnSpektator.Text = "🎥 Spek"
+    lblStatus.Text = "Spektator: berhenti"
+end
+
+btnSpektator.MouseButton1Click:Connect(function()
+    if isSpektating then
+        stopSpektator(); return
+    end
+    if not targetPlayer or not targetPlayer.Parent then
+        lblStatus.Text = "Pilih player dulu!"; return
+    end
+    local char = targetPlayer.Character
+    local hum  = char and char:FindFirstChild("Humanoid")
+    if hum then
+        isSpektating = true
+        Camera.CameraSubject = hum
+        lblStatus.Text = "Spektator: " .. targetPlayer.Name
+        btnSpektator.BackgroundColor3 = Color3.fromRGB(180,30,30)
+        btnSpektator.Text = "⏹ Stop Spek"
+    end
+end)
+
+btnTPHim.MouseButton1Click:Connect(function()
+    if not targetPlayer or not targetPlayer.Parent then
+        lblStatus.Text = "Pilih player dulu!"; return
+    end
+    local char = targetPlayer.Character
+    local tHrp = char and char:FindFirstChild("HumanoidRootPart")
+    local myHrp = getHRP()
+    if tHrp and myHrp then
+        pcall(function()
+            myHrp.CFrame = tHrp.CFrame + Vector3.new(2, 0, 0)
+        end)
+        lblStatus.Text = "TP ke: " .. targetPlayer.Name
+        btnTPHim.BackgroundColor3 = Color3.fromRGB(200,100,0)
+        task.delay(0.4, function() btnTPHim.BackgroundColor3 = Color3.fromRGB(140,60,0) end)
+    end
+end)
+
+btnAnotherPlayer.MouseButton1Click:Connect(function()
+    if apPanelOpen then
+        closeApPanel()
+    else
+        openApPanel()
+    end
+end)
+
+-- ══════════════════════════════════════
+--   AUTO COLOR (dulu Auto RGB)
+--   Setiap giliran: pilih 1 warna solid, ubah tenda satu-satu
+--   Setelah semua tenda warna itu → pilih warna berikutnya
+-- ══════════════════════════════════════
+local AUTO_COLORS = {
+    Color3.fromRGB(255, 50,  50),   -- merah
+    Color3.fromRGB(255, 150, 20),   -- oranye
+    Color3.fromRGB(255, 230, 0),    -- kuning
+    Color3.fromRGB(50,  220, 50),   -- hijau
+    Color3.fromRGB(0,   180, 255),  -- biru muda
+    Color3.fromRGB(60,  60,  255),  -- biru
+    Color3.fromRGB(180, 0,   255),  -- ungu
+    Color3.fromRGB(255, 0,   180),  -- pink
+    Color3.fromRGB(255, 255, 255),  -- putih
+}
+local autoColorIndex    = 1   -- index warna sekarang di AUTO_COLORS
+local autoColorTentIdx  = 1   -- giliran tenda mana yang akan dicat
+local autoColorAllDone  = false  -- semua tenda sudah satu warna?
+
+stopAutoRGB = function()
+    autoRGBActive = false
+    if autoRGBConn then autoRGBConn:Disconnect(); autoRGBConn = nil end
+    setButtonStates()
+end
+
+local function startAutoRGB()
+    autoRGBActive   = true
+    autoColorIndex  = 1
+    autoColorTentIdx= 1
+    autoColorAllDone= false
+    if autoRGBConn then autoRGBConn:Disconnect() end
+
+    -- Pakai task.spawn loop biar bisa task.wait antar tenda
+    autoRGBConn = nil
+    task.spawn(function()
+        while autoRGBActive do
+            local n = #tentFolders
+            if n == 0 then task.wait(0.5); continue end
+
+            local col = AUTO_COLORS[autoColorIndex]
+
+            -- Cat tenda satu demi satu
+            for idx = 1, n do
+                if not autoRGBActive then break end
+                local f = tentFolders[idx]
+                if f and f.Parent then
+                    pcall(function()
+                        f.ChangePropColor:InvokeServer(col)
+                    end)
+                end
+                task.wait(0.25)  -- jeda antar tenda ~0.25 detik
+            end
+
+            if not autoRGBActive then break end
+
+            -- Semua tenda sudah satu warna, delay sebentar lalu ganti warna
+            task.wait(1.2)
+
+            autoColorIndex = (autoColorIndex % #AUTO_COLORS) + 1
+        end
+    end)
+
+    setButtonStates()
+end
+
+btnAutoRGB.MouseButton1Click:Connect(function()
+    if autoRGBActive then
+        stopAutoRGB()
+        lblStatus.Text = "Auto Color: OFF"
+    else
+        startAutoRGB()
+        lblStatus.Text = "Auto Color: ON 🎨"
+    end
+end)
+
+-- ══════════════════════════════════════
 --   SET MODE
 -- ══════════════════════════════════════
 local function setMode(newMode)
@@ -1320,12 +2022,20 @@ local function setMode(newMode)
     end
     stopLoop(); tentFolders = {}
 
-    if newMode == "menyebar" then
-        menyebarTargets = {}; menyebarSwapTimer = 0; menyebarAngle = 0
-    elseif newMode == "loading" then
-        loadingTime = 0
-    elseif newMode == "arus" then
-        arusOffset = 0
+    if newMode == "ekor" then
+        ekorHistory = {}
+    end
+    if newMode == "games" then
+        gamesPositions = {}; gamesSides = {}; gamesSwapTimer = 0
+    end
+    if newMode == "wings" then
+        wingsPositions = {}; wingsAngle = 0
+    end
+    if newMode == "mahkota" then
+        mahkotaAngle = 0
+    end
+    if newMode == "bodyside" then
+        bodySideSides={}; bodySidePositions={}; bodySideOrbit={}; bodySideSwapTimer=0
     end
 
     currentMode = newMode
@@ -1335,7 +2045,7 @@ local function setMode(newMode)
         lblStatus.Text = "Letakkan minimal 1 tenda dulu!"
         currentMode = "none"; setButtonStates(); return
     end
-    local target = ballFollowActive and "bola" or "player"
+    local target = ballFollowActive and "bola" or (targetPlayer and targetPlayer.Name) or "player"
     lblStatus.Text = string.format("%s aktif – %d tenda → %s", newMode, #tentFolders, target)
     startLoop(); setButtonStates()
 end
@@ -1366,14 +2076,15 @@ end
 local function stopBallLoop()
     if ballLoopConn then ballLoopConn:Disconnect(); ballLoopConn=nil end
 end
-local function restartMode()
+
+restartMode = function()
     if currentMode ~= "none" then
         local saved = currentMode
         stopLoop(); tentFolders = {}
         currentMode = saved
         TOTAL_TENTS = modeTentCount[saved] or 2
         if refreshTents(TOTAL_TENTS) then startLoop() end
-        local tgt = ballFollowActive and "bola" or "player"
+        local tgt = ballFollowActive and "bola" or (targetPlayer and targetPlayer.Name) or "player"
         lblStatus.Text = string.format("%s aktif → %s", currentMode, tgt)
         setButtonStates()
     end
@@ -1405,13 +2116,20 @@ btnDown.MouseButton1Up:Connect(function()   verticalMove =  0 end)
 --   RESPAWN
 -- ══════════════════════════════════════
 LocalPlayer.CharacterAdded:Connect(function(newChar)
-    stopLoop(); stopBallLoop(); destroyBall(); stopBahlilCycle()
+    stopLoop(); stopBallLoop(); destroyBall(); stopBahlilCycle(); stopAutoRGB()
     ballFollowActive = false; currentMode = "none"
+    targetPlayer = nil
+    closeApPanel()
     tentFolders = {}; verticalMove = 0
+    ekorHistory = {}
+    gamesPositions = {}; gamesSides = {}; gamesSwapTimer = 0
+    wingsPositions = {}; wingsAngle = 0
+    mahkotaAngle = 0
+    bodySideSides={}; bodySidePositions={}; bodySideOrbit={}; bodySideSwapTimer=0
     task.wait(1)
     Camera.CameraSubject = newChar:WaitForChild("Humanoid")
     lblStatus.Text = "Status: respawned"
     setButtonStates()
 end)
 
-print("[OK] Tent Orbit v6.1 loaded –", PLAYER_NAME)
+print("[OK] Tent Orbit v6.3 loaded –", PLAYER_NAME)
