@@ -336,7 +336,7 @@ local function AktifkanHandler()
 
     task.spawn(function()
         -- Set awal
-        RemoteTeks:FireServer("RolePlayName", "HANDLER " .. math.random(6,7))
+        RemoteTeks:FireServer("RolePlayName", "BmSkyMods " .. math.random(6,7))
         RemoteTeks:FireServer("RolePlayBio", "BH Server Staff " .. math.random(1,10))
 
         while loopBerjalan do
