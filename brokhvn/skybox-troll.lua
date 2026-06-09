@@ -1,144 +1,222 @@
--- Skybox Trolling (Skybox ON/OFF, Spin ON/OFF) – draggable
+-- Skybox Trolling Lengkap & Stabil
 if not game:IsLoaded() then game.Loaded:Wait() end
 
+-- Layanan Utama
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- State
 local isSkyboxOn = false
 local skyboxTrack = nil
+local savedBody = {}
 local isSpinOn = false
 local spinBodyVel = nil
 
--- Fungsi anim2track
-local function anim2track(id)
-    local objs = game:GetObjects(id)
-    for _, obj in ipairs(objs) do
-        if obj:IsA("Animation") then return obj.AnimationId end
-    end
-    return id
+-- Ambil Remote Tubuh
+local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
+local ChangeBody = Remotes:WaitForChild("ChangeCharacterBody", 5)
+local ResetBody = Remotes:WaitForChild("ResetCharacterAppearance", 5)
+
+-- Fungsi Simpan/Kembalikan Tubuh
+local function saveCurrentBody(humanoid)
+    if not humanoid then return {} end
+    local desc = humanoid:GetAppliedDescription()
+    return {
+        Torso = desc.Torso,
+        RightArm = desc.RightArm,
+        LeftArm = desc.LeftArm,
+        RightLeg = desc.RightLeg,
+        LeftLeg = desc.LeftLeg,
+        Head = desc.Head
+    }
 end
 
--- GUI
-local gui = Instance.new("ScreenGui", PlayerGui)
-gui.Name = "SkyboxTrollGUI"
+local function restoreBody(saved)
+    if not saved or next(saved) == nil then return end
+    local args = {
+        saved.Torso,
+        saved.RightArm,
+        saved.LeftArm,
+        saved.RightLeg,
+        saved.LeftLeg,
+        saved.Head
+    }
+    pcall(function() ChangeBody:InvokeServer(args) end)
+end
+
+-- Fungsi Animasi
+local function playAnim(humanoid, animId, speed)
+    if not humanoid then return end
+    local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
+    local anim = Instance.new("Animation")
+    anim.AnimationId = animId
+    local track = animator:LoadAnimation(anim)
+    track.Priority = Enum.AnimationPriority.Action4
+    track:Play(0.1, 1, speed or 1)
+    return track
+end
+
+-- ==============================================
+-- GUI Dapat Digeser (Draggable)
+-- ==============================================
+local gui = Instance.new("ScreenGui")
+gui.Name = "SkyboxTrollHub"
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = PlayerGui
 
-local win = Instance.new("Frame", gui)
-win.Size = UDim2.new(0, 180, 0, 80)
-win.Position = UDim2.new(0, 390, 0.28, 0)
-win.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-win.BorderSizePixel = 0
-Instance.new("UICorner", win).CornerRadius = UDim.new(0, 6)
-Instance.new("UIStroke", win).Color = Color3.fromRGB(50, 42, 80)
+-- Jendela Utama
+local Window = Instance.new("Frame")
+Window.Name = "MainWindow"
+Window.Size = UDim2.new(0, 190, 0, 95)
+Window.Position = UDim2.new(0.35, 0, 0.3, 0)
+Window.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+Window.BorderSizePixel = 0
+Window.ClipsDescendants = true
+Instance.new("UICorner", Window).CornerRadius = UDim.new(0, 7)
+Instance.new("UIStroke", Window).Color = Color3.fromRGB(60, 50, 90)
+Instance.new("UIStroke", Window).Thickness = 1.5
+Window.Parent = gui
 
--- Title (TextButton untuk drag)
-local title = Instance.new("TextButton", win)
-title.Size = UDim2.new(1, 0, 0, 22)
-title.BackgroundColor3 = Color3.fromRGB(28, 18, 55)
-title.Text = "Skybox Trolling"
-title.TextColor3 = Color3.new(1,1,1)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 12
-title.AutoButtonColor = false
-Instance.new("UICorner", title).CornerRadius = UDim.new(0, 6)
+-- Bilah Judul (untuk geser)
+local TitleBar = Instance.new("TextButton")
+TitleBar.Name = "TitleBar"
+TitleBar.Size = UDim2.new(1, 0, 0, 26)
+TitleBar.BackgroundColor3 = Color3.fromRGB(35, 25, 65)
+TitleBar.Text = "🌌 Skybox V4 + Spin"
+TitleBar.TextColor3 = Color3.new(1, 1, 1)
+TitleBar.Font = Enum.Font.GothamBold
+TitleBar.TextSize = 12
+TitleBar.AutoButtonColor = false
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 7)
+TitleBar.Parent = Window
 
--- Drag functionality
+-- Fungsi Geser
 local dragging, dragStart, startPos
-title.InputBegan:Connect(function(input)
+TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
-        startPos = win.Position
+        startPos = Window.Position
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then dragging = false end
         end)
     end
 end)
-title.InputChanged:Connect(function(input)
+
+TitleBar.InputChanged:Connect(function(input)
     if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
-        win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        Window.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
     end
 end)
-title.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
+
+TitleBar.InputEnded:Connect(function() dragging = false end)
 
 -- Tombol Skybox
-local btnSky = Instance.new("TextButton", win)
-btnSky.Size = UDim2.new(1, -16, 0, 26)
-btnSky.Position = UDim2.new(0, 8, 0, 28)
-btnSky.BackgroundColor3 = Color3.fromRGB(72, 32, 140)
-btnSky.Text = "Skybox: OFF"
-btnSky.TextColor3 = Color3.new(1,1,1)
-btnSky.Font = Enum.Font.GothamBold
-btnSky.TextSize = 11
-Instance.new("UICorner", btnSky).CornerRadius = UDim.new(0, 4)
+local BtnSkybox = Instance.new("TextButton")
+BtnSkybox.Name = "BtnSkybox"
+BtnSkybox.Size = UDim2.new(1, -20, 0, 28)
+BtnSkybox.Position = UDim2.new(0, 10, 0, 34)
+BtnSkybox.BackgroundColor3 = Color3.fromRGB(85, 45, 160)
+BtnSkybox.Text = "Skybox: OFF"
+BtnSkybox.TextColor3 = Color3.new(1, 1, 1)
+BtnSkybox.Font = Enum.Font.GothamBold
+BtnSkybox.TextSize = 11
+BtnSkybox.AutoButtonColor = false
+Instance.new("UICorner", BtnSkybox).CornerRadius = UDim.new(0, 5)
+BtnSkybox.Parent = Window
 
 -- Tombol Spin
-local btnSpin = Instance.new("TextButton", win)
-btnSpin.Size = UDim2.new(1, -16, 0, 26)
-btnSpin.Position = UDim2.new(0, 8, 0, 58)
-btnSpin.BackgroundColor3 = Color3.fromRGB(155, 28, 28)
-btnSpin.Text = "Spin: OFF"
-btnSpin.TextColor3 = Color3.new(1,1,1)
-btnSpin.Font = Enum.Font.GothamBold
-btnSpin.TextSize = 11
-Instance.new("UICorner", btnSpin).CornerRadius = UDim.new(0, 4)
+local BtnSpin = Instance.new("TextButton")
+BtnSpin.Name = "BtnSpin"
+BtnSpin.Size = UDim2.new(1, -20, 0, 28)
+BtnSpin.Position = UDim2.new(0, 10, 0, 66)
+BtnSpin.BackgroundColor3 = Color3.fromRGB(170, 35, 35)
+BtnSpin.Text = "Spin: OFF"
+BtnSpin.TextColor3 = Color3.new(1, 1, 1)
+BtnSpin.Font = Enum.Font.GothamBold
+BtnSpin.TextSize = 11
+BtnSpin.AutoButtonColor = false
+Instance.new("UICorner", BtnSpin).CornerRadius = UDim.new(0, 5)
+BtnSpin.Parent = Window
 
--- Notif
-local function notify(msg)
-    print("[SkyboxTroll]", msg)
-end
-
--- Logic
-btnSky.MouseButton1Click:Connect(function()
+-- ==============================================
+-- Logika Skybox V4
+-- ==============================================
+BtnSkybox.MouseButton1Click:Connect(function()
     isSkyboxOn = not isSkyboxOn
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hum = char:WaitForChild("Humanoid", 5)
+    if not hum then return end
+
     if isSkyboxOn then
-        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if not hum then notify("Humanoid tidak ada"); isSkyboxOn = false; return end
-        local asset = "rbxassetid://93224413172183"
-        local realId = anim2track(asset)
-        local anim = Instance.new("Animation")
-        anim.AnimationId = realId
-        skyboxTrack = hum:LoadAnimation(anim)
-        skyboxTrack.Priority = Enum.AnimationPriority.Movement
-        skyboxTrack:Play()
-        btnSky.Text = "Skybox: ON"
-        btnSky.BackgroundColor3 = Color3.fromRGB(52,168,83)
-        notify("Skybox animasi mulai")
+        savedBody = saveCurrentBody(hum)
+        -- Terapkan tubuh khusus Skybox V4
+        local bodyArgs = {
+            96655874457685,
+            123402086843885,
+            78300682916056,
+            86276701020724,
+            78409653958165,
+            120668655481073
+        }
+        pcall(function() ChangeBody:InvokeServer(bodyArgs) end)
+        task.wait(0.2)
+        -- Mainkan animasi
+        skyboxTrack = playAnim(hum, "rbxassetid://70883871260184", 1)
+        BtnSkybox.Text = "Skybox: ON"
+        BtnSkybox.BackgroundColor3 = Color3.fromRGB(60, 180, 90)
     else
-        if skyboxTrack then skyboxTrack:Stop(); skyboxTrack:Destroy(); skyboxTrack = nil end
-        btnSky.Text = "Skybox: OFF"
-        btnSky.BackgroundColor3 = Color3.fromRGB(72, 32, 140)
-        notify("Skybox animasi berhenti")
+        -- Hentikan animasi & kembalikan tubuh asli
+        if skyboxTrack then pcall(function() skyboxTrack:Stop() skyboxTrack:Destroy() end) end
+        restoreBody(savedBody)
+        savedBody = {}
+        skyboxTrack = nil
+        BtnSkybox.Text = "Skybox: OFF"
+        BtnSkybox.BackgroundColor3 = Color3.fromRGB(85, 45, 160)
     end
 end)
 
-btnSpin.MouseButton1Click:Connect(function()
+-- ==============================================
+-- Logika Spin
+-- ==============================================
+BtnSpin.MouseButton1Click:Connect(function()
     isSpinOn = not isSpinOn
-    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart", 5)
+    if not hrp then return end
+
     if isSpinOn then
-        if not hrp then notify("Karakter belum siap"); isSpinOn = false; return end
-        local vel = Instance.new("BodyAngularVelocity")
-        vel.AngularVelocity = Vector3.new(0, 50, 0)
-        vel.MaxTorque = Vector3.new(0, 1e5, 0)
-        vel.Parent = hrp
-        spinBodyVel = vel
-        btnSpin.Text = "Spin: ON"
-        btnSpin.BackgroundColor3 = Color3.fromRGB(52,168,83)
-        notify("Spin aktif")
+        -- Aktifkan putaran
+        spinBodyVel = Instance.new("BodyAngularVelocity")
+        spinBodyVel.AngularVelocity = Vector3.new(0, 55, 0)
+        spinBodyVel.MaxTorque = Vector3.new(0, 1e5, 0)
+        spinBodyVel.P = 100000
+        spinBodyVel.Parent = hrp
+        BtnSpin.Text = "Spin: ON"
+        BtnSpin.BackgroundColor3 = Color3.fromRGB(60, 180, 90)
     else
-        if spinBodyVel then spinBodyVel:Destroy(); spinBodyVel = nil end
-        btnSpin.Text = "Spin: OFF"
-        btnSpin.BackgroundColor3 = Color3.fromRGB(155, 28, 28)
-        notify("Spin mati")
+        -- Matikan putaran
+        if spinBodyVel then spinBodyVel:Destroy() spinBodyVel = nil end
+        BtnSpin.Text = "Spin: OFF"
+        BtnSpin.BackgroundColor3 = Color3.fromRGB(170, 35, 35)
     end
+end)
+
+-- Perbarui jika karakter respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    isSkyboxOn = false
+    isSpinOn = false
+    BtnSkybox.Text = "Skybox: OFF"
+    BtnSkybox.BackgroundColor3 = Color3.fromRGB(85, 45, 160)
+    BtnSpin.Text = "Spin: OFF"
+    BtnSpin.BackgroundColor3 = Color3.fromRGB(170, 35, 35)
 end)
