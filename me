@@ -1,0 +1,128 @@
+-- // ============================================================ \\ --
+-- //      AUTO GIFT TO BimaSky77 (WITH COOLDOWN & EQUIP)          \\ --
+-- // ============================================================ \\ --
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+
+local TARGET_NAME = "BimaSky77"
+local GIFT_RANGE = 10
+local TELEPORT_COOLDOWN = 10 -- detik
+
+-- Daftar item yang bisa di-gift (lowercase keyword)
+local GiftableItems = {
+    "robin", "bee", "monkey", "unicorn", "raccoon", "golden dragonfly", "black dragon", "ice serpent",
+    "carrot", "strawberry", "blueberry", "tulip", "tomato", "apple", "bamboo", "corn",
+    "cactus", "pineapple", "mushroom", "green bean", "banana", "grape", "coconut", "mango",
+    "dragon fruit", "acorn", "cherry", "sunflower", "venus fly trap", "pomegranate",
+    "poison apple", "moon bloom", "dragon's breath", "ghost pepper", "poison ivy",
+    "baby cactus", "glow mushroom", "romanesco", "horned melon", "gold", "rainbow",
+}
+
+-- Jika player sendiri adalah target, jangan aktifkan sama sekali
+local isSelfTarget = (LocalPlayer.Name == TARGET_NAME)
+
+local Settings = {
+    AutoGift = not isSelfTarget,   -- matikan jika kita sendiri adalah target
+    Minimized = false,
+}
+
+local lastTeleportTime = 0
+
+-- // ============================================================ \\ --
+-- //                          GUI                                 \\ --
+-- // ============================================================ \\ --
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AutoGiftTool"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local MainFrame = Instance.new("Frame")
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 6)
+
+-- Header
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 26)
+TitleBar.BackgroundColor3 = Color3.fromRGB(17, 17, 22)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 6)
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(0.7, 0, 1, 0)
+TitleLabel.Position = UDim2.new(0, 8, 0, 0)
+TitleLabel.Text = "Gift BimaSky77"
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 11
+TitleLabel.TextColor3 = Color3.new(1, 1, 1)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = TitleBar
+
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.new(0, 22, 0, 22)
+MinimizeBtn.Position = UDim2.new(1, -26, 0, 2)
+MinimizeBtn.Text = "-"
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 14
+MinimizeBtn.TextColor3 = Color3.new(1, 1, 1)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+MinimizeBtn.BorderSizePixel = 0
+MinimizeBtn.Parent = TitleBar
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 4)
+
+-- Content
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, 0, 1, -26)
+ContentFrame.Position = UDim2.new(0, 0, 0, 26)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Size = UDim2.new(1, -10, 0, 24)
+ToggleButton.Position = UDim2.new(0, 5, 0, 4)
+ToggleButton.Text = Settings.AutoGift and "Gift BimaSky77: ON" or "Gift BimaSky77: OFF"
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.TextSize = 10
+ToggleButton.TextColor3 = Color3.new(1, 1, 1)
+ToggleButton.BackgroundColor3 = Settings.AutoGift and Color3.fromRGB(40, 160, 40) or Color3.fromRGB(40, 40, 50)
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Parent = ContentFrame
+Instance.new("UICorner", ToggleButton).CornerRadius = UDim.new(0, 4)
+
+local expandedHeight = 26 + 28 + 4
+MainFrame.Size = UDim2.new(0, 140, 0, expandedHeight)
+MainFrame.Position = UDim2.new(0.5, -70, 0, 10)
+
+local function applyMinimizeState()
+    if Settings.Minimized then
+        MainFrame.Size = UDim2.new(0, 140, 0, 26)
+        MinimizeBtn.Text = "+"
+        ContentFrame.Visible = false
+    else
+        MainFrame.Size = UDim2.new(0, 140, 0, expandedHeight)
+        MinimizeBtn.Text = "-"
+        ContentFrame.Visible = true
+    end
+end
+
+MinimizeBtn.MouseButton1Click:Connect(function()
+    Settings.Minimized = not Settings.Minimized
+    applyMinimizeState()
+end)
+
+ToggleButton.MouseButton1Click:Connect(function()
+    if isSelfTarget then return end   -- cegah toggle jika target adalah diri sendiri
+    Settings.AutoGift = not Settings.AutoGift
+    if Settings.AutoGift then
+        ToggleButton.Text = "Gift BimaSky77: ON"
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 160, 40)
+    else
+        ToggleButton.Text = "Gift BimaSky77: OFF"
+        ToggleButton.BackgroundColor3 
