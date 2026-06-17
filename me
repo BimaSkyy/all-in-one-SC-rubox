@@ -125,4 +125,166 @@ ToggleButton.MouseButton1Click:Connect(function()
         ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 160, 40)
     else
         ToggleButton.Text = "Gift BimaSky77: OFF"
-        ToggleButton.BackgroundColor3 
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    end
+end)
+
+-- // ============================================================ \\ --
+-- //                     FUNGSI DASAR                             \\ --
+-- // ============================================================ \\ --
+
+-- Cek apakah sebuah string mengandung salah satu keyword giftable
+local function matchesGiftable(str)
+    local lower = str:lower()
+    for _, keyword in ipairs(GiftableItems) do
+        if string.find(lower, keyword, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Cek apakah tool adalah item yang bisa di-gift
+local function isGiftableTool(tool)
+    if not tool:IsA("Tool") then return false end
+    if matchesGiftable(tool.Name) then return true end
+    local seed = tool:GetAttribute("SeedTool")
+    if seed and matchesGiftable(seed) then return true end
+    local pet = tool:GetAttribute("PetName")
+    if pet and matchesGiftable(pet) then return true end
+    local core = tool:GetAttribute("CorePartName")
+    if core and matchesGiftable(core) then return true end
+    return false
+end
+
+-- Cari item giftable di backpack atau tangan
+local function findGiftableTool()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if isGiftableTool(tool) then
+                return tool
+            end
+        end
+    end
+    local char = LocalPlayer.Character
+    if char then
+        for _, tool in ipairs(char:GetChildren()) do
+            if isGiftableTool(tool) then
+                return tool
+            end
+        end
+    end
+    return nil
+end
+
+-- Equip tool ke tangan
+local function equipTool(tool)
+    local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return false end
+    local currentTool = humanoid:FindFirstChildOfClass("Tool")
+    if currentTool == tool then return true end
+    humanoid:EquipTool(tool)
+    task.wait(0.3)
+    return true
+end
+
+-- Cari Prompt Gift di dekat target (fungsi dari script debug)
+local function findGiftPromptNearTarget()
+    local targetPlayer = Players:FindFirstChild(TARGET_NAME)
+    if not targetPlayer or not targetPlayer.Character then return nil end
+    local targetRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not targetRoot then return nil end
+
+    local targetPos = targetRoot.Position
+
+    for _, prompt in ipairs(Workspace:GetDescendants()) do
+        if not prompt:IsA("ProximityPrompt") then continue end
+        if not prompt.Enabled then continue end
+        if prompt.ActionText ~= "Gift" then continue end
+
+        local promptPart = prompt.Parent
+        if not promptPart:IsA("BasePart") then
+            promptPart = prompt:FindFirstAncestorWhichIsA("BasePart")
+        end
+        if not promptPart then continue end
+
+        local dist = (promptPart.Position - targetPos).Magnitude
+        if dist <= GIFT_RANGE then
+            return prompt
+        end
+    end
+    return nil
+end
+
+-- Klik prompt (dari script debug)
+local function clickPrompt(prompt)
+    return pcall(function()
+        if fireproximityprompt then
+            fireproximityprompt(prompt)
+        else
+            prompt:InputHoldBegin()
+            task.wait(0.05)
+            prompt:InputHoldEnd()
+        end
+    end)
+end
+
+-- Teleport ke dekat target jika cooldown sudah lewat dan jarak > GIFT_RANGE
+local function teleportNearTarget(targetPlayer)
+    local targetRoot = targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not targetRoot then return false end
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return false end
+
+    local dist = (myRoot.Position - targetRoot.Position).Magnitude
+    if dist <= GIFT_RANGE then return false end -- sudah dekat
+
+    local now = tick()
+    if now - lastTeleportTime < TELEPORT_COOLDOWN then return false end -- cooldown belum selesai
+
+    myRoot.CFrame = targetRoot.CFrame * CFrame.new(2, 0, 2)
+    lastTeleportTime = now
+    task.wait(0.3)
+    return true
+end
+
+-- // ============================================================ \\ --
+-- //                     LOOP UTAMA                               \\ --
+-- // ============================================================ \\ --
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        if not Settings.AutoGift or isSelfTarget then continue end
+
+        local targetPlayer = Players:FindFirstChild(TARGET_NAME)
+        if not targetPlayer or not targetPlayer.Character then continue end
+
+        -- Cari item giftable
+        local tool = findGiftableTool()
+        if not tool then continue end
+
+        -- Equip item
+        if not equipTool(tool) then continue end
+
+        -- Teleport jika cooldown sudah lewat dan jarak terlalu jauh
+        teleportNearTarget(targetPlayer)
+
+        -- Cari prompt Gift (akan muncul di tool yang kita pegang)
+        local giftPrompt = findGiftPromptNearTarget()
+        if giftPrompt then
+            if clickPrompt(giftPrompt) then
+                -- Gift berhasil, tunggu item hilang dan lanjut ke item lain
+                task.wait(0.8)
+            end
+        else
+            task.wait(0.5)
+        end
+    end
+end)
+
+if isSelfTarget then
+    print("Auto Gift dinonaktifkan karena Anda sendiri adalah BimaSky77.")
+else
+    print("Auto Gift tool loaded. Target: " .. TARGET_NAME .. ". Teleport cooldown: " .. TELEPORT_COOLDOWN .. "s.")
+end
