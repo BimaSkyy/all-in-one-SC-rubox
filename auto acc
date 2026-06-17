@@ -1,0 +1,205 @@
+-- // ============================================================ \\ --
+-- //              AUTO MAIL & GIFTS (Standalone GUI)              \\ --
+-- // ============================================================ \\ --
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- Coba ambil modul Networking (tidak memblokir GUI jika gagal)
+local Net = nil
+pcall(function()
+    local sm = ReplicatedStorage:WaitForChild("SharedModules", 5)
+    local mod = sm and sm:WaitForChild("Networking", 5)
+    if mod then
+        Net = require(mod)
+    end
+end)
+
+-- // ============================================================ \\ --
+-- //                          SETTINGS                            \\ --
+-- // ============================================================ \\ --
+local Settings = {
+    AutoMail = true,    -- langsung ON saat dijalankan
+    AutoGift = true,    -- langsung ON
+    Minimized = false,
+}
+
+-- // ============================================================ \\ --
+-- //                          FUNGSI                              \\ --
+-- // ============================================================ \\ --
+local function fire(path, ...)
+    if not Net then return false, "no network" end
+    local cur = Net
+    for part in path:gmatch("[^.]+") do
+        if type(cur) == "table" then cur = cur[part] else return false, "invalid path" end
+    end
+    if not (cur and cur.Fire) then return false, "no remote" end
+    local args = table.pack(...)
+    return pcall(function() return cur:Fire(table.unpack(args, 1, args.n)) end)
+end
+
+-- Loop Auto‑Claim Mailbox (setiap 30 detik)
+task.spawn(function()
+    while true do
+        if Settings.AutoMail and Net then
+            local ok, box = fire("Mailbox.OpenInbox")
+            if ok and type(box) == "table" then
+                local mb = box.Mailbox or box.Inbox or box
+                for id, entry in pairs(mb) do
+                    if not Settings.AutoMail then break end
+                    if type(entry) == "table" and (entry.Claimed or entry.IsClaimed) then
+                        -- sudah di‑claim
+                    else
+                        fire("Mailbox.Claim", id)
+                        task.wait(0.3)
+                    end
+                end
+            end
+            -- tunggu 30 detik sebelum cek lagi
+            for _ = 1, 30 do
+                if not Settings.AutoMail then break end
+                task.wait(1)
+            end
+        else
+            task.wait(1)
+        end
+    end
+end)
+
+-- Auto‑Accept Gift (listener)
+if Net then
+    pcall(function()
+        local g = Net.Gifting.Prompted
+        if g and g.OnClientEvent then
+            g.OnClientEvent:Connect(function(fromPlayer)
+                if Settings.AutoGift and fromPlayer then
+                    pcall(function()
+                        Net.Gifting.Response:Fire(fromPlayer, true)
+                    end)
+                end
+            end)
+        end
+    end)
+end
+
+-- // ============================================================ \\ --
+-- //                          GUI (sederhana)                     \\ --
+-- // ============================================================ \\ --
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MailGiftsTool"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local MainFrame = Instance.new("Frame")
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 6)
+
+-- Header
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 26)
+TitleBar.BackgroundColor3 = Color3.fromRGB(17, 17, 22)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 6)
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(0.7, 0, 1, 0)
+TitleLabel.Position = UDim2.new(0, 8, 0, 0)
+TitleLabel.Text = "Mail & Gifts"
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 12
+TitleLabel.TextColor3 = Color3.new(1, 1, 1)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = TitleBar
+
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.new(0, 22, 0, 22)
+MinimizeBtn.Position = UDim2.new(1, -26, 0, 2)
+MinimizeBtn.Text = "-"
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 14
+MinimizeBtn.TextColor3 = Color3.new(1, 1, 1)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+MinimizeBtn.BorderSizePixel = 0
+MinimizeBtn.Parent = TitleBar
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 4)
+
+-- Content
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, 0, 1, -26)
+ContentFrame.Position = UDim2.new(0, 0, 0, 26)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+-- Fungsi tombol toggle
+local function createToggle(y, text, active, parent)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -10, 0, 24)
+    btn.Position = UDim2.new(0, 5, 0, y)
+    btn.Text = text .. (active and ": ON" or ": OFF")
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 10
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.BackgroundColor3 = active and Color3.fromRGB(40, 160, 40) or Color3.fromRGB(40, 40, 50)
+    btn.BorderSizePixel = 0
+    btn.Parent = parent
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    return btn
+end
+
+local MailButton = createToggle(4, "Auto Mail", Settings.AutoMail, ContentFrame)
+local GiftButton = createToggle(34, "Auto Gift", Settings.AutoGift, ContentFrame)
+
+-- Ukuran frame
+local expandedHeight = 26 + 58
+MainFrame.Size = UDim2.new(0, 120, 0, expandedHeight)
+MainFrame.Position = UDim2.new(0.5, -60, 0, 10)
+
+-- Minimize
+local function applyMinimizeState()
+    if Settings.Minimized then
+        MainFrame.Size = UDim2.new(0, 120, 0, 26)
+        MinimizeBtn.Text = "+"
+        ContentFrame.Visible = false
+    else
+        MainFrame.Size = UDim2.new(0, 120, 0, expandedHeight)
+        MinimizeBtn.Text = "-"
+        ContentFrame.Visible = true
+    end
+end
+
+MinimizeBtn.MouseButton1Click:Connect(function()
+    Settings.Minimized = not Settings.Minimized
+    applyMinimizeState()
+end)
+
+-- Toggle handler
+MailButton.MouseButton1Click:Connect(function()
+    Settings.AutoMail = not Settings.AutoMail
+    if Settings.AutoMail then
+        MailButton.Text = "Auto Mail: ON"
+        MailButton.BackgroundColor3 = Color3.fromRGB(40, 160, 40)
+    else
+        MailButton.Text = "Auto Mail: OFF"
+        MailButton.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    end
+end)
+
+GiftButton.MouseButton1Click:Connect(function()
+    Settings.AutoGift = not Settings.AutoGift
+    if Settings.AutoGift then
+        GiftButton.Text = "Auto Gift: ON"
+        GiftButton.BackgroundColor3 = Color3.fromRGB(40, 160, 40)
+    else
+        GiftButton.Text = "Auto Gift: OFF"
+        GiftButton.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    end
+end)
+
+print("Mail & Gifts tool siap. Default: Auto Mail ON, Auto Gift ON.")
