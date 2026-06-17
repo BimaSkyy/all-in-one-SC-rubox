@@ -1,0 +1,162 @@
+-- // ============================================================ \\ --
+-- //              AUTO ANTI-FLING (ALWAYS ON)                     \\ --
+-- // ============================================================ \\ --
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- // ============================================================ \\ --
+-- //                          STATE                               \\ --
+-- // ============================================================ \\ --
+local Settings = {
+    AntiFlingActive = true,   -- default langsung ON
+    Minimized = false,
+}
+
+local antiFlingConnection = nil
+
+-- // ============================================================ \\ --
+-- //                     FUNGSI ANTI‑FLING                        \\ --
+-- // ============================================================ \\ --
+local function enableAntiFling()
+    if antiFlingConnection then return end -- sudah berjalan
+    antiFlingConnection = RunService.Stepped:Connect(function()
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                for _, part in ipairs(player.Character:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function disableAntiFling()
+    if not antiFlingConnection then return end
+    antiFlingConnection:Disconnect()
+    antiFlingConnection = nil
+end
+
+-- // ============================================================ \\ --
+-- //                          GUI                                 \\ --
+-- // ============================================================ \\ --
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AntiFlingTool"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local MainFrame = Instance.new("Frame")
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 6)
+
+-- Header
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 26)
+TitleBar.BackgroundColor3 = Color3.fromRGB(17, 17, 22)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 6)
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(0.7, 0, 1, 0)
+TitleLabel.Position = UDim2.new(0, 8, 0, 0)
+TitleLabel.Text = "Anti-Fling"
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 12
+TitleLabel.TextColor3 = Color3.new(1, 1, 1)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = TitleBar
+
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.new(0, 22, 0, 22)
+MinimizeBtn.Position = UDim2.new(1, -26, 0, 2)
+MinimizeBtn.Text = "-"
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 14
+MinimizeBtn.TextColor3 = Color3.new(1, 1, 1)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+MinimizeBtn.BorderSizePixel = 0
+MinimizeBtn.Parent = TitleBar
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 4)
+
+-- Content
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, 0, 1, -26)
+ContentFrame.Position = UDim2.new(0, 0, 0, 26)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+-- Tombol toggle
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Size = UDim2.new(1, -10, 0, 24)
+ToggleButton.Position = UDim2.new(0, 5, 0, 4)
+ToggleButton.Text = "AntiFling: ON"
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.TextSize = 10
+ToggleButton.TextColor3 = Color3.new(1, 1, 1)
+ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 160, 40)
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Parent = ContentFrame
+Instance.new("UICorner", ToggleButton).CornerRadius = UDim.new(0, 4)
+
+-- Ukuran frame
+local expandedHeight = 26 + 28 + 4  -- 58
+MainFrame.Size = UDim2.new(0, 120, 0, expandedHeight)
+MainFrame.Position = UDim2.new(0.5, -60, 0, 10)
+
+-- Minimize logic
+local function applyMinimizeState()
+    if Settings.Minimized then
+        MainFrame.Size = UDim2.new(0, 120, 0, 26)
+        MinimizeBtn.Text = "+"
+        ContentFrame.Visible = false
+    else
+        MainFrame.Size = UDim2.new(0, 120, 0, expandedHeight)
+        MinimizeBtn.Text = "-"
+        ContentFrame.Visible = true
+    end
+end
+
+MinimizeBtn.MouseButton1Click:Connect(function()
+    Settings.Minimized = not Settings.Minimized
+    applyMinimizeState()
+end)
+
+-- Toggle handler
+ToggleButton.MouseButton1Click:Connect(function()
+    Settings.AntiFlingActive = not Settings.AntiFlingActive
+    if Settings.AntiFlingActive then
+        enableAntiFling()
+        ToggleButton.Text = "AntiFling: ON"
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 160, 40)
+    else
+        disableAntiFling()
+        ToggleButton.Text = "AntiFling: OFF"
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    end
+end)
+
+-- // ============================================================ \\ --
+-- //              AKTIFKAN OTOMATIS & JAGA SAAT MATI              \\ --
+-- // ============================================================ \\ --
+-- Langsung aktif saat skrip dijalankan
+enableAntiFling()
+
+-- Aktifkan ulang setiap kali karakter mati / respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    if Settings.AntiFlingActive then
+        -- Jangan langsung reconnect, tunggu sebentar agar karakter baru siap
+        task.wait(0.5)
+        enableAntiFling()
+    end
+end)
+
+print("Anti-Fling tool loaded. Always ON, reactivates on respawn.")
