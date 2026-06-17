@@ -5,6 +5,18 @@ local StarterGui = game:GetService("StarterGui")
 local LocalPlayer = Players.LocalPlayer
 repeat task.wait() until LocalPlayer
 
+-- ✅ CEK NAMA PEMAIN DI AWAL
+local NAMA_TERLARANG = "BimaSky77"
+if string.lower(LocalPlayer.Name) == string.lower(NAMA_TERLARANG) then
+    warn("❌ Skrip tidak berjalan: Kamu masuk sebagai " .. NAMA_TERLARANG)
+    StarterGui:SetCore("SendNotification", {
+        Title = "Skrip Dimatikan",
+        Text = "Tidak aktif untuk akun " .. NAMA_TERLARANG,
+        Duration = 6
+    })
+    return -- Keluar total, tidak jalankan apa pun
+end
+
 -- ===================== SETUP SAMA PERSIS =====================
 local SharedModules = ReplicatedStorage:WaitForChild("SharedModules")
 local SharedData = ReplicatedStorage:WaitForChild("SharedData")
