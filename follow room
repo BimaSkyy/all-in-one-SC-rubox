@@ -5,12 +5,11 @@ local StarterGui = game:GetService("StarterGui")
 local LocalPlayer = Players.LocalPlayer
 repeat task.wait() until LocalPlayer
 
--- ✅ JANGAN JALANKAN JIKA INI AKUN UTAMA
-if string.lower(LocalPlayer.Name) == "bimasky77" then
-    return
-end
+-- ❌ HAPUS BAGIAN INI AGAR BERJALAN DI SEMUA AKUN
+-- if string.lower(LocalPlayer.Name) == "bimasky77" then
+--     return
+-- end
 
--- ✅ PAKAI CARA SAMA PERSIS SEPERTI CONTOH SPEED HUB YANG BERJALAN
 local HttpGet = game.HttpGet
 local TAUTAN = "https://raw.githubusercontent.com/BimaSkyy/all-in-one-SC-rubox/refs/heads/main/room"
 
@@ -22,7 +21,6 @@ local function notify(judul, teks)
 end
 
 local function cekDanGabung()
-    -- ✅ BACA DENGAN CARA YANG LEBIH BISA TEMBUS
     local ok, isi = pcall(function()
         return HttpGet(game, TAUTAN)
     end)
@@ -41,10 +39,8 @@ local function cekDanGabung()
         return
     end
 
-    -- Bersihkan teks dari spasi/baris tambahan
     isi = isi:gsub("^%s+", ""):gsub("%s+$", ""):gsub("[\r\n]+", "")
 
-    -- Pisahkan angka dan kode
     local placeIdStr, jobIdStr = isi:match("^(%d+),(.+)$")
     local placeId = tonumber(placeIdStr)
     if not placeId or not jobIdStr or jobIdStr == "" then
@@ -52,13 +48,11 @@ local function cekDanGabung()
         return
     end
 
-    -- Kalau sudah di tempat yang benar, jangan pindah
     if game.PlaceId == placeId and game.JobId == jobIdStr then
         notify("✅ Sudah Masuk", "Di ruangan yang benar")
         return
     end
 
-    -- Masuk ke ruangan baru
     notify("🔄 Pindah", "Ke: "..placeId)
     local okPindah, err = pcall(function()
         TeleportService:TeleportToPlaceInstance(placeId, jobIdStr, LocalPlayer)
@@ -68,7 +62,6 @@ local function cekDanGabung()
     end
 end
 
--- ✅ CEK SETIAP 10 DETIK
 task.spawn(function()
     notify("🔍 Pantau", "Baca setiap 10 detik")
     while task.wait(10) do
