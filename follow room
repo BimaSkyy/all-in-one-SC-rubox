@@ -5,11 +5,7 @@ local StarterGui = game:GetService("StarterGui")
 local LocalPlayer = Players.LocalPlayer
 repeat task.wait() until LocalPlayer
 
--- ❌ HAPUS BAGIAN INI AGAR BERJALAN DI SEMUA AKUN
--- if string.lower(LocalPlayer.Name) == "bimasky77" then
---     return
--- end
-
+-- Bisa jalan di SEMUA akun
 local HttpGet = game.HttpGet
 local TAUTAN = "https://raw.githubusercontent.com/BimaSkyy/all-in-one-SC-rubox/refs/heads/main/room"
 
@@ -48,17 +44,27 @@ local function cekDanGabung()
         return
     end
 
+    -- Kalau sudah di ruangan yang benar, jangan pindah lagi sama sekali
     if game.PlaceId == placeId and game.JobId == jobIdStr then
         notify("✅ Sudah Masuk", "Di ruangan yang benar")
         return
     end
 
-    notify("🔄 Pindah", "Ke: "..placeId)
+    notify("🔄 Coba Masuk", "Ke: "..placeId)
+    -- ✅ TAMBAHAN: Cegah kotak paksa + tangani jika penuh
     local okPindah, err = pcall(function()
-        TeleportService:TeleportToPlaceInstance(placeId, jobIdStr, LocalPlayer)
+        return TeleportService:TeleportToPlaceInstance(placeId, jobIdStr, LocalPlayer)
     end)
+
     if not okPindah then
-        notify("❌ Gagal Pindah", tostring(err))
+        -- Deteksi kalau alasannya penuh
+        if err:lower():find("full") or err:lower():find("penuh") then
+            notify("⏳ Server Penuh", "Menunggu 20 detik lalu coba lagi...")
+            -- ✅ Jeda lebih lama saat penuh supaya tidak muncul pesan terus
+            task.wait(20)
+        else
+            notify("❌ Gagal Pindah", tostring(err))
+        end
     end
 end
 
