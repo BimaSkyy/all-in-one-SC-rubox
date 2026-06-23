@@ -1,5 +1,5 @@
 -- ============================================================
--- VERSI RAPI UNTUK DELTA EXECUTOR - PAKAI VERCEL
+-- VERSI PERBAIKAN KHUSUS REDFINGER + DELTA
 -- ============================================================
 
 local webhook = "https://vercel-webhooktest.vercel.app/api/webhook"
@@ -37,29 +37,30 @@ local function formatAngka(angka)
 end
 
 -- ============================================================
--- FUNGSI KIRIM KE VERCEL
+-- FUNGSI KIRIM KE VERCEL - VERSI AMAN REDFINGER
 -- ============================================================
 
 local function sendToVercel(isiTeks)
     pcall(function()
-        local http = game:GetService("HttpService")
-        -- Bentuk data agar jelas di tampilan web
+        local httpSvc = game:GetService("HttpService")
+        -- Pastikan layanan aktif
+        if not httpSvc.HttpEnabled then
+            pcall(function() httpSvc.HttpEnabled = true end)
+        end
+
         local dataKirim = {
-            pengirim = "Roblox_Delta",
+            pengirim = "Roblox_Redfinger",
             waktu_lokal = os.date("%H:%M:%S"),
             konten = isiTeks
         }
-        local isiJson = http:JSONEncode(dataKirim)
+        local isiJson = httpSvc:JSONEncode(dataKirim)
 
+        -- ✅ URUTAN DIUBAH: Utamakan fungsi yang paling pasti di Delta/Redfinger
         local metodeKirim = {
-            -- Cara standar Roblox
+            -- Cara khas Executor biasanya lebih diizinkan di awan
             function()
-                http:PostAsync(webhook, isiJson, Enum.HttpContentType.ApplicationJson)
-            end,
-            -- Cara cadangan 1
-            function()
-                if http_request then
-                    http_request({
+                if typeof(request) == "function" then
+                    return request({
                         Url = webhook,
                         Method = "POST",
                         Headers = {["Content-Type"] = "application/json"},
@@ -67,34 +68,40 @@ local function sendToVercel(isiTeks)
                     })
                 end
             end,
-            -- Cara cadangan 2
             function()
-                if request then
-                    request({
+                if typeof(http_request) == "function" then
+                    return http_request({
                         Url = webhook,
                         Method = "POST",
                         Headers = {["Content-Type"] = "application/json"},
                         Body = isiJson
                     })
                 end
+            end,
+            -- Cara bawaan Roblox (sering dibatasi di awan)
+            function()
+                return httpSvc:PostAsync(webhook, isiJson, Enum.HttpContentType.ApplicationJson)
             end
         }
 
-        -- Coba semua cara sampai ada yang berhasil
+        -- Coba satu per satu sampai berhasil
         for _, coba in ipairs(metodeKirim) do
-            pcall(coba)
+            local ok, hasil = pcall(coba)
+            if ok and hasil then
+                print("[Vercel] Berhasil dikirim")
+                break
+            end
         end
     end)
 end
 
 -- ============================================================
--- CEK APAKAH ITEM FARMING / HASIL PANEN
+-- BAGIAN CEK ITEM DAN DATA (TIDAK DIUBAH)
 -- ============================================================
 
 local function isFarmingItem(item)
     local name = item.Name
     
-    -- Skip item karakter
     local skipList = {
         "Humanoid", "HumanoidRootPart", "Billboard_UI", "GalaxyTexture",
         "Health", "Animate", "PetState", "Body Colors", "CharacterMesh",
@@ -107,7 +114,6 @@ local function isFarmingItem(item)
         if name == skip then return false end
     end
     
-    -- Cek apakah item punya atribut farming
     local hasFruit = item:GetAttribute("Fruit") or item:GetAttribute("FruitName")
     local hasSeed = item:GetAttribute("SeedTool") or item:GetAttribute("SeedName")
     local hasPet = item:GetAttribute("Pet") or item:GetAttribute("PetId")
@@ -118,7 +124,6 @@ local function isFarmingItem(item)
         return true
     end
     
-    -- Nama item yang mengandung kata kunci farming
     local farmingKeywords = {
         "Seed", "Fruit", "Berry", "Apple", "Mushroom", "Bamboo", "Cactus",
         "Tomato", "Corn", "Pumpkin", "Grape", "Mango", "Coconut", "Banana",
@@ -137,16 +142,143 @@ local function isFarmingItem(item)
     return false
 end
 
--- Cek apakah item adalah hasil panen (punya berat)
 local function isHarvest(item)
     local weight = item:GetAttribute("Weight")
     local fruit = item:GetAttribute("Fruit") or item:GetAttribute("FruitName")
     return weight and weight > 0 and fruit ~= nil
 end
 
+local function getData()
+    local plr = game:GetService("Players").LocalPlayer
+    if not plr then return "Player not found" end
+    
+    local sheckles = 0
+    local items = {}
+    local harvests = {}
+    local totalHarvestWeight = 0
+    local totalItems = 0
+    
+    pcall(function()
+        local ls = plr:FindFirstChild("leaderstats")
+        if ls then
+            local sv = ls:FindFirstChild("Sheckles")
+            if sv then sheckles = sv.Value end
+        end
+    end)
+    
+    for _, holder in ipairs({plr.Character, plr:FindFirstChildOfClass("Backpack")}) do
+        if holder then
+            for _, item in ipairs(holder:GetChildren()) do
+                if isFarmingItem(item) then
+                    local nama = item.Name
+                    local jml = item:GetAttribute("Count") or 1
+                    local weight = item:GetAttribute("Weight") or 0
+                    local fruit = item:GetAttribute("Fruit") or item:GetAttribute("FruitName")
+                    
+                    if weight > 0 and fruit then
+                        local mutasi = item:GetAttribute("Mutation")
+                        local key = nama
+                        if mutasi and mutasi ~= "" and mutasi ~= "None" then
+                            key = nama .. " [" .. mutasi .. "]"
+                        end
+                        
+                        harvests[key] = harvests[key] or {count = 0, totalWeight = 0}
+                        harvests[key].count = harvests[key].count + jml
+                        harvests[key].totalWeight = harvests[key].totalWeight + (weight * jml)
+                        totalHarvestWeight = totalHarvestWeight + (weight * jml)
+                    else
+                        items[nama] = (items[nama] or 0) + jml
+                    end
+                    
+                    totalItems = totalItems + jml
+                end
+            end
+        end
+    end
+    
+    local msg = {}
+    msg[#msg + 1] = "📊 DATA FARM"
+    msg[#msg + 1] = "👤 " .. plr.Name
+    msg[#msg + 1] = ""
+    msg[#msg + 1] = "💰 Jumlah Uang: " .. formatAngka(sheckles)
+    msg[#msg + 1] = ""
+    msg[#msg + 1] = "─" .. string.rep("─", 30)
+    msg[#msg + 1] = ""
+    msg[#msg + 1] = "🎒 Item Backpack:"
+    if next(items) then
+        local sortedItems = {}
+        for nama, jml in pairs(items) do
+            sortedItems[#sortedItems + 1] = {nama = nama, jml = jml}
+        end
+        table.sort(sortedItems, function(a, b) return a.jml > b.jml end)
+        for _, item in ipairs(sortedItems) do
+            msg[#msg + 1] = "  " .. item.nama .. " x" .. item.jml
+        end
+    else
+        msg[#msg + 1] = "  (tidak ada item)"
+    end
+    msg[#msg + 1] = ""
+    msg[#msg + 1] = "─" .. string.rep("─", 30)
+    msg[#msg + 1] = ""
+    msg[#msg + 1] = "🌾 Hasil Panen:"
+    if next(harvests) then
+        local sortedHarvests = {}
+        for nama, data in pairs(harvests) do
+            sortedHarvests[#sortedHarvests + 1] = {nama = nama, data = data}
+        end
+        table.sort(sortedHarvests, function(a, b) return a.data.totalWeight > b.data.totalWeight end)
+        for _, h in ipairs(sortedHarvests) do
+            local avgWeight = h.data.totalWeight / h.data.count
+            msg[#msg + 1] = string.format("  %s [%.2f KG] x%d", h.nama, avgWeight, h.data.count)
+        end
+    else
+        msg[#msg + 1] = "  (belum ada hasil panen)"
+    end
+    msg[#msg + 1] = ""
+    msg[#msg + 1] = "─" .. string.rep("─", 30)
+    msg[#msg + 1] = ""
+    msg[#msg + 1] = "📦 Total Semua Panen: " .. formatAngka(totalHarvestWeight) .. " KG"
+    msg[#msg + 1] = "📦 Total Semua Item: " .. totalItems .. " item"
+    msg[#msg + 1] = ""
+    msg[#msg + 1] = "─" .. string.rep("─", 30)
+    msg[#msg + 1] = ""
+    msg[#msg + 1] = "🕐 Update at: " .. os.date("%H:%M:%S")
+    
+    return table.concat(msg, "\n")
+end
+
 -- ============================================================
--- AMBIL DATA FARMING
+-- JALANKAN
 -- ============================================================
 
-local function getData()
-    local plr = game:GetServi
+print("[Monitor] Versi Perbaikan untuk Redfinger")
+
+local lastMessage = ""
+local sameCount = 0
+local maxSame = 5
+
+task.spawn(function()
+    local data = getData()
+    sendToVercel(data)
+    lastMessage = data
+    
+    while true do
+        task.wait(10)
+        pcall(function()
+            local dataBaru = getData()
+            if dataBaru ~= lastMessage then
+                sendToVercel(dataBaru)
+                lastMessage = dataBaru
+                sameCount = 0
+            else
+                sameCount = sameCount + 1
+                if sameCount >= maxSame then
+                    sendToVercel(dataBaru .. "\n\n🔄 Masih Berjalan di Redfinger: " .. os.date("%H:%M:%S"))
+                    sameCount = 0
+                end
+            end
+        end)
+    end
+end)
+
+print("[Monitor] Siap di Redfinger!")
