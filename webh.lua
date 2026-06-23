@@ -1,9 +1,9 @@
 -- ============================================================
--- VERSI HANYA TULIS KE BERKAS - REDFINGER
+-- MONITOR DATA FARM - CARA SEDERHANA & PASTI JALAN
 -- ============================================================
 
 local folderPath = "DataFarm"
-local fileName = "datagag.txt"
+local fileName = "datagag.json"
 local fullPath = folderPath .. "/" .. fileName
 
 -- Buat folder kalau belum ada
@@ -12,199 +12,145 @@ if not isfolder(folderPath) then
 end
 
 -- ============================================================
--- FUNGSI FORMAT ANGKA
+-- FUNGSI PENDUKUNG
 -- ============================================================
 
+-- Format angka jadi K/M/B/T
 local function formatAngka(angka)
     if not angka or angka == 0 then return "0" end
-    
     local abs = math.abs(angka)
-    local suffix = ""
-    local value = angka
-    
-    if abs >= 1e12 then
-        value = angka / 1e12
-        suffix = "T"
-    elseif abs >= 1e9 then
-        value = angka / 1e9
-        suffix = "B"
-    elseif abs >= 1e6 then
-        value = angka / 1e6
-        suffix = "M"
-    elseif abs >= 1e3 then
-        value = angka / 1e3
-        suffix = "K"
-    end
-    
-    if suffix ~= "" then
-        return string.format("%.2f%s", value, suffix)
-    else
-        return string.format("%.0f", angka)
-    end
+    local suf, val = "", angka
+    if abs >= 1e12 then val = angka / 1e12; suf = "T"
+    elseif abs >= 1e9 then val = angka / 1e9; suf = "B"
+    elseif abs >= 1e6 then val = angka / 1e6; suf = "M"
+    elseif abs >= 1e3 then val = angka / 1e3; suf = "K" end
+    return suf ~= "" and string.format("%.2f%s", val, suf) or string.format("%.0f", angka)
 end
 
--- ============================================================
--- CEK ITEM FARMING
--- ============================================================
-
-local function isFarmingItem(item)
-    local name = item.Name
-    
-    local skipList = {
-        "Humanoid", "HumanoidRootPart", "Billboard_UI", "GalaxyTexture",
-        "Health", "Animate", "PetState", "Body Colors", "CharacterMesh",
-        "Shirt", "Pants", "Left Leg", "Left Arm", "Right Leg", "Right Arm",
-        "Torso", "Head", "BoySpaceHair", "GirlHair", "Hat", "Accessory",
-        "Handle", "Grip"
-    }
-    
-    for _, skip in ipairs(skipList) do
-        if name == skip then return false end
-    end
-    
-    local hasFruit = item:GetAttribute("Fruit") or item:GetAttribute("FruitName")
-    local hasSeed = item:GetAttribute("SeedTool") or item:GetAttribute("SeedName")
-    local hasPet = item:GetAttribute("Pet") or item:GetAttribute("PetId")
-    local hasWeight = item:GetAttribute("Weight")
-    local isTool = item:IsA("Tool")
-    
-    if isTool and (hasFruit or hasSeed or hasPet or hasWeight) then
-        return true
-    end
-    
-    local farmingKeywords = {
-        "Seed", "Fruit", "Berry", "Apple", "Mushroom", "Bamboo", "Cactus",
-        "Tomato", "Corn", "Pumpkin", "Grape", "Mango", "Coconut", "Banana",
-        "Pineapple", "Dragon", "Venus", "Moon", "Sunflower", "Lotus",
-        "Sprinkler", "Watering", "Trowel", "Shovel", "Pot", "Gnome",
-        "Pet", "Egg", "Owl", "Bear", "Bee", "Unicorn", "Dragonfly",
-        "Raccoon", "Monkey", "Deer", "Frog", "Robin", "Ladder", "Crate"
-    }
-    
-    for _, keyword in ipairs(farmingKeywords) do
-        if name:find(keyword, 1, true) then
-            return true
+-- Ubah tabel jadi teks JSON sederhana
+local function tabelKeJson(tbl)
+    if type(tbl) ~= "table" then return "{}" end
+    local bagian = {}
+    for k, v in pairs(tbl) do
+        if type(v) == "string" then
+            bagian[#bagian + 1] = string.format('"%s":"%s"', k, v:gsub('"', '\\"'))
+        elseif type(v) == "number" then
+            bagian[#bagian + 1] = string.format('"%s":%s', k, v)
+        elseif type(v) == "table" then
+            bagian[#bagian + 1] = string.format('"%s":%s', k, tabelKeJson(v))
         end
     end
-    
-    return false
+    return "{" .. table.concat(bagian, ",") .. "}"
 end
 
 -- ============================================================
--- AMBIL DATA & TULIS KE BERKAS
+-- AMBIL SEMUA BARANG TANPA PENYARINGAN RUMIT
 -- ============================================================
 
-local function getDataDanTulis()
+local dataSebelum = "" -- Cegah tulis ulang kalau tidak berubah
+
+local function ambilDanTulis()
     local plr = game:GetService("Players").LocalPlayer
     if not plr then return end
 
-    local sheckles = 0
-    local items = {}
-    local harvests = {}
-    local totalHarvestWeight = 0
-    local totalItems = 0
+    local uang = 0
+    local barang = {}       -- Semua barang biasa
+    local hasilPanen = {}    -- Barang yang punya berat (hasil panen)
+    local totalBerat = 0
+    local totalSemua = 0
 
-    -- Ambil uang
+    -- Ambil jumlah uang
     pcall(function()
         local ls = plr:FindFirstChild("leaderstats")
         if ls then
-            local sv = ls:FindFirstChild("Sheckles")
-            if sv then sheckles = sv.Value end
+            local val = ls:FindFirstChild("Sheckles") or ls:FindFirstChild("Money")
+            if val then uang = val.Value end
         end
     end)
 
-    -- Ambil barang
-    for _, holder in ipairs({plr.Character, plr:FindFirstChildOfClass("Backpack")}) do
-        if holder then
-            for _, item in ipairs(holder:GetChildren()) do
-                if isFarmingItem(item) then
-                    local nama = item.Name
-                    local jml = item:GetAttribute("Count") or 1
-                    local weight = item:GetAttribute("Weight") or 0
-                    local fruit = item:GetAttribute("Fruit") or item:GetAttribute("FruitName")
+    -- ✅ CARI SEMUA DI SINI: Backpack + Karakter
+    local lokasi = {
+        plr:FindFirstChildOfClass("Backpack"),
+        plr.Character
+    }
 
-                    if weight > 0 and fruit then
-                        local mutasi = item:GetAttribute("Mutation")
-                        local key = nama
-                        if mutasi and mutasi ~= "" and mutasi ~= "None" then
-                            key = nama .. " [" .. mutasi .. "]"
+    for _, tempat in lokasi do
+        if tempat then
+            -- AMBIL SETIAP ANAK YANG ADA, TANPA SYARAT RUMIT
+            for _, item in tempat:GetChildren() do
+                -- Hanya ambil yang berjenis Alat (Tool) — ini yang selalu dipakai barang di tas
+                if item:IsA("Tool") then
+                    local nama = item.Name
+                    -- Ambil jumlah dari atribut, kalau tidak ada pakai 1
+                    local jumlah = item:GetAttribute("Count") or 1
+                    local berat = item:GetAttribute("Weight") or 0
+                    local mutasi = item:GetAttribute("Mutation") or ""
+
+                    -- ✅ LEWATI JIKA JUMLAH 0
+                    if jumlah <= 0 then continue end
+
+                    -- Pisahkan kategori: ada berat = panen, tidak ada = barang biasa
+                    if berat > 0 then
+                        -- Buat nama lengkap kalau ada mutasi
+                        local namaPenuh = nama
+                        if mutasi ~= "" and mutasi ~= "None" then
+                            namaPenuh = nama .. " [" .. mutasi .. "]"
                         end
-                        harvests[key] = harvests[key] or {count=0, totalWeight=0}
-                        harvests[key].count = harvests[key].count + jml
-                        harvests[key].totalWeight = harvests[key].totalWeight + (weight * jml)
-                        totalHarvestWeight = totalHarvestWeight + (weight * jml)
+                        -- Tambah hitungan
+                        if not hasilPanen[namaPenuh] then
+                            hasilPanen[namaPenuh] = {jumlah = 0, beratTotal = 0}
+                        end
+                        hasilPanen[namaPenuh].jumlah += jumlah
+                        hasilPanen[namaPenuh].beratTotal += berat * jumlah
+                        totalBerat += berat * jumlah
                     else
-                        items[nama] = (items[nama] or 0) + jml
+                        -- Masuk daftar barang biasa
+                        barang[nama] = (barang[nama] or 0) + jumlah
                     end
-                    totalItems = totalItems + jml
+
+                    totalSemua += jumlah
                 end
             end
         end
     end
 
-    -- Susun teks
-    local msg = {}
-    msg[#msg+1] = "📊 DATA FARM"
-    msg[#msg+1] = "👤 " .. plr.Name
-    msg[#msg+1] = ""
-    msg[#msg+1] = "💰 Jumlah Uang: " .. formatAngka(sheckles)
-    msg[#msg+1] = ""
-    msg[#msg+1] = "──────────────────────────────"
-    msg[#msg+1] = ""
-    msg[#msg+1] = "🎒 Item Backpack:"
-    if next(items) then
-        local sorted = {}
-        for n,j in pairs(items) do sorted[#sorted+1]={n=n,j=j} end
-        table.sort(sorted,function(a,b)return a.j>b.j end)
-        for _,v in ipairs(sorted) do msg[#msg+1] = "  "..v.n.." x"..v.j end
-    else
-        msg[#msg+1] = "  (tidak ada item)"
-    end
-    msg[#msg+1] = ""
-    msg[#msg+1] = "──────────────────────────────"
-    msg[#msg+1] = ""
-    msg[#msg+1] = "🌾 Hasil Panen:"
-    if next(harvests) then
-        local sorted = {}
-        for n,d in pairs(harvests) do sorted[#sorted+1]={n=n,d=d} end
-        table.sort(sorted,function(a,b)return a.d.totalWeight>b.d.totalWeight end)
-        for _,v in ipairs(sorted) do
-            local rata = v.d.totalWeight / v.d.count
-            msg[#msg+1] = string.format("  %s [%.2f KG] x%d", v.n, rata, v.d.count)
-        end
-    else
-        msg[#msg+1] = "  (belum ada hasil panen)"
-    end
-    msg[#msg+1] = ""
-    msg[#msg+1] = "──────────────────────────────"
-    msg[#msg+1] = ""
-    msg[#msg+1] = "📦 Total Berat: "..formatAngka(totalHarvestWeight).." KG"
-    msg[#msg+1] = "📦 Total Item: "..totalItems.." buah"
-    msg[#msg+1] = ""
-    msg[#msg+1] = "🕐 Waktu: "..os.date("%H:%M:%S")
+    -- ✅ SUSUN DATA LENGKAP KE JSON
+    local data = {
+        waktu = os.date("%H:%M:%S"),
+        namaPemain = plr.Name,
+        uang = uang,
+        uangFormat = formatAngka(uang),
+        barang = barang,
+        panen = hasilPanen,
+        totalBerat = totalBerat,
+        totalBeratFormat = formatAngka(totalBerat),
+        totalItem = totalSemua
+    }
 
-    -- ✅ HANYA TULIS KE BERKAS
-    tulis = table.concat(msg, "\n")
-    writefile(fullPath, tulis)
-
-    -- Notifikasi saja
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "💾 Data Disimpan",
-        Text = "Berkas diperbarui",
-        Duration = 2
-    })
+    -- Tulis ke berkas HANYA kalau ada perubahan
+    local teksAkhir = tabelKeJson(data)
+    if teksAkhir ~= dataSebelum then
+        dataSebelum = teksAkhir
+        writefile(fullPath, teksAkhir)
+        -- Notifikasi kalau berhasil
+        game.StarterGui:SetCore("SendNotification", {
+            Title = "✅ Data Diperbarui",
+            Text = "Tersimpan ke berkas",
+            Duration = 1
+        })
+    end
 end
 
 -- ============================================================
 -- JALANKAN BERKALA
 -- ============================================================
 
-print("[Monitor] Mode Tulis Berkas Aktif")
+print("[✅] Pemantau Sederhana AKTIF - Cek setiap 2 detik")
+ambilDanTulis() -- Jalankan pertama kali langsung
 
 task.spawn(function()
-    getDataDanTulis() -- tulis pertama kali
     while true do
-        task.wait(10) -- perbarui setiap 10 detik
-        getDataDanTulis()
+        task.wait(2) -- Cek ulang cepat tapi aman
+        ambilDanTulis()
     end
 end)
