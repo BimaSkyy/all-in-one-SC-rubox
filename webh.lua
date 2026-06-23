@@ -1,8 +1,15 @@
 -- ============================================================
--- VERSI PERBAIKAN KHUSUS REDFINGER + DELTA
+-- VERSI HANYA TULIS KE BERKAS - REDFINGER
 -- ============================================================
 
-local webhook = "https://vercel-webhooktest.vercel.app/api/webhook"
+local folderPath = "DataFarm"
+local fileName = "datagag.txt"
+local fullPath = folderPath .. "/" .. fileName
+
+-- Buat folder kalau belum ada
+if not isfolder(folderPath) then
+    makefolder(folderPath)
+end
 
 -- ============================================================
 -- FUNGSI FORMAT ANGKA
@@ -37,66 +44,7 @@ local function formatAngka(angka)
 end
 
 -- ============================================================
--- FUNGSI KIRIM KE VERCEL - VERSI AMAN REDFINGER
--- ============================================================
-
-local function sendToVercel(isiTeks)
-    pcall(function()
-        local httpSvc = game:GetService("HttpService")
-        -- Pastikan layanan aktif
-        if not httpSvc.HttpEnabled then
-            pcall(function() httpSvc.HttpEnabled = true end)
-        end
-
-        local dataKirim = {
-            pengirim = "Roblox_Redfinger",
-            waktu_lokal = os.date("%H:%M:%S"),
-            konten = isiTeks
-        }
-        local isiJson = httpSvc:JSONEncode(dataKirim)
-
-        -- ✅ URUTAN DIUBAH: Utamakan fungsi yang paling pasti di Delta/Redfinger
-        local metodeKirim = {
-            -- Cara khas Executor biasanya lebih diizinkan di awan
-            function()
-                if typeof(request) == "function" then
-                    return request({
-                        Url = webhook,
-                        Method = "POST",
-                        Headers = {["Content-Type"] = "application/json"},
-                        Body = isiJson
-                    })
-                end
-            end,
-            function()
-                if typeof(http_request) == "function" then
-                    return http_request({
-                        Url = webhook,
-                        Method = "POST",
-                        Headers = {["Content-Type"] = "application/json"},
-                        Body = isiJson
-                    })
-                end
-            end,
-            -- Cara bawaan Roblox (sering dibatasi di awan)
-            function()
-                return httpSvc:PostAsync(webhook, isiJson, Enum.HttpContentType.ApplicationJson)
-            end
-        }
-
-        -- Coba satu per satu sampai berhasil
-        for _, coba in ipairs(metodeKirim) do
-            local ok, hasil = pcall(coba)
-            if ok and hasil then
-                print("[Vercel] Berhasil dikirim")
-                break
-            end
-        end
-    end)
-end
-
--- ============================================================
--- BAGIAN CEK ITEM DAN DATA (TIDAK DIUBAH)
+-- CEK ITEM FARMING
 -- ============================================================
 
 local function isFarmingItem(item)
@@ -142,22 +90,21 @@ local function isFarmingItem(item)
     return false
 end
 
-local function isHarvest(item)
-    local weight = item:GetAttribute("Weight")
-    local fruit = item:GetAttribute("Fruit") or item:GetAttribute("FruitName")
-    return weight and weight > 0 and fruit ~= nil
-end
+-- ============================================================
+-- AMBIL DATA & TULIS KE BERKAS
+-- ============================================================
 
-local function getData()
+local function getDataDanTulis()
     local plr = game:GetService("Players").LocalPlayer
-    if not plr then return "Player not found" end
-    
+    if not plr then return end
+
     local sheckles = 0
     local items = {}
     local harvests = {}
     local totalHarvestWeight = 0
     local totalItems = 0
-    
+
+    -- Ambil uang
     pcall(function()
         local ls = plr:FindFirstChild("leaderstats")
         if ls then
@@ -165,7 +112,8 @@ local function getData()
             if sv then sheckles = sv.Value end
         end
     end)
-    
+
+    -- Ambil barang
     for _, holder in ipairs({plr.Character, plr:FindFirstChildOfClass("Backpack")}) do
         if holder then
             for _, item in ipairs(holder:GetChildren()) do
@@ -174,111 +122,89 @@ local function getData()
                     local jml = item:GetAttribute("Count") or 1
                     local weight = item:GetAttribute("Weight") or 0
                     local fruit = item:GetAttribute("Fruit") or item:GetAttribute("FruitName")
-                    
+
                     if weight > 0 and fruit then
                         local mutasi = item:GetAttribute("Mutation")
                         local key = nama
                         if mutasi and mutasi ~= "" and mutasi ~= "None" then
                             key = nama .. " [" .. mutasi .. "]"
                         end
-                        
-                        harvests[key] = harvests[key] or {count = 0, totalWeight = 0}
+                        harvests[key] = harvests[key] or {count=0, totalWeight=0}
                         harvests[key].count = harvests[key].count + jml
                         harvests[key].totalWeight = harvests[key].totalWeight + (weight * jml)
                         totalHarvestWeight = totalHarvestWeight + (weight * jml)
                     else
                         items[nama] = (items[nama] or 0) + jml
                     end
-                    
                     totalItems = totalItems + jml
                 end
             end
         end
     end
-    
+
+    -- Susun teks
     local msg = {}
-    msg[#msg + 1] = "📊 DATA FARM"
-    msg[#msg + 1] = "👤 " .. plr.Name
-    msg[#msg + 1] = ""
-    msg[#msg + 1] = "💰 Jumlah Uang: " .. formatAngka(sheckles)
-    msg[#msg + 1] = ""
-    msg[#msg + 1] = "─" .. string.rep("─", 30)
-    msg[#msg + 1] = ""
-    msg[#msg + 1] = "🎒 Item Backpack:"
+    msg[#msg+1] = "📊 DATA FARM"
+    msg[#msg+1] = "👤 " .. plr.Name
+    msg[#msg+1] = ""
+    msg[#msg+1] = "💰 Jumlah Uang: " .. formatAngka(sheckles)
+    msg[#msg+1] = ""
+    msg[#msg+1] = "──────────────────────────────"
+    msg[#msg+1] = ""
+    msg[#msg+1] = "🎒 Item Backpack:"
     if next(items) then
-        local sortedItems = {}
-        for nama, jml in pairs(items) do
-            sortedItems[#sortedItems + 1] = {nama = nama, jml = jml}
-        end
-        table.sort(sortedItems, function(a, b) return a.jml > b.jml end)
-        for _, item in ipairs(sortedItems) do
-            msg[#msg + 1] = "  " .. item.nama .. " x" .. item.jml
-        end
+        local sorted = {}
+        for n,j in pairs(items) do sorted[#sorted+1]={n=n,j=j} end
+        table.sort(sorted,function(a,b)return a.j>b.j end)
+        for _,v in ipairs(sorted) do msg[#msg+1] = "  "..v.n.." x"..v.j end
     else
-        msg[#msg + 1] = "  (tidak ada item)"
+        msg[#msg+1] = "  (tidak ada item)"
     end
-    msg[#msg + 1] = ""
-    msg[#msg + 1] = "─" .. string.rep("─", 30)
-    msg[#msg + 1] = ""
-    msg[#msg + 1] = "🌾 Hasil Panen:"
+    msg[#msg+1] = ""
+    msg[#msg+1] = "──────────────────────────────"
+    msg[#msg+1] = ""
+    msg[#msg+1] = "🌾 Hasil Panen:"
     if next(harvests) then
-        local sortedHarvests = {}
-        for nama, data in pairs(harvests) do
-            sortedHarvests[#sortedHarvests + 1] = {nama = nama, data = data}
-        end
-        table.sort(sortedHarvests, function(a, b) return a.data.totalWeight > b.data.totalWeight end)
-        for _, h in ipairs(sortedHarvests) do
-            local avgWeight = h.data.totalWeight / h.data.count
-            msg[#msg + 1] = string.format("  %s [%.2f KG] x%d", h.nama, avgWeight, h.data.count)
+        local sorted = {}
+        for n,d in pairs(harvests) do sorted[#sorted+1]={n=n,d=d} end
+        table.sort(sorted,function(a,b)return a.d.totalWeight>b.d.totalWeight end)
+        for _,v in ipairs(sorted) do
+            local rata = v.d.totalWeight / v.d.count
+            msg[#msg+1] = string.format("  %s [%.2f KG] x%d", v.n, rata, v.d.count)
         end
     else
-        msg[#msg + 1] = "  (belum ada hasil panen)"
+        msg[#msg+1] = "  (belum ada hasil panen)"
     end
-    msg[#msg + 1] = ""
-    msg[#msg + 1] = "─" .. string.rep("─", 30)
-    msg[#msg + 1] = ""
-    msg[#msg + 1] = "📦 Total Semua Panen: " .. formatAngka(totalHarvestWeight) .. " KG"
-    msg[#msg + 1] = "📦 Total Semua Item: " .. totalItems .. " item"
-    msg[#msg + 1] = ""
-    msg[#msg + 1] = "─" .. string.rep("─", 30)
-    msg[#msg + 1] = ""
-    msg[#msg + 1] = "🕐 Update at: " .. os.date("%H:%M:%S")
-    
-    return table.concat(msg, "\n")
+    msg[#msg+1] = ""
+    msg[#msg+1] = "──────────────────────────────"
+    msg[#msg+1] = ""
+    msg[#msg+1] = "📦 Total Berat: "..formatAngka(totalHarvestWeight).." KG"
+    msg[#msg+1] = "📦 Total Item: "..totalItems.." buah"
+    msg[#msg+1] = ""
+    msg[#msg+1] = "🕐 Waktu: "..os.date("%H:%M:%S")
+
+    -- ✅ HANYA TULIS KE BERKAS
+    tulis = table.concat(msg, "\n")
+    writefile(fullPath, tulis)
+
+    -- Notifikasi saja
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "💾 Data Disimpan",
+        Text = "Berkas diperbarui",
+        Duration = 2
+    })
 end
 
 -- ============================================================
--- JALANKAN
+-- JALANKAN BERKALA
 -- ============================================================
 
-print("[Monitor] Versi Perbaikan untuk Redfinger")
-
-local lastMessage = ""
-local sameCount = 0
-local maxSame = 5
+print("[Monitor] Mode Tulis Berkas Aktif")
 
 task.spawn(function()
-    local data = getData()
-    sendToVercel(data)
-    lastMessage = data
-    
+    getDataDanTulis() -- tulis pertama kali
     while true do
-        task.wait(10)
-        pcall(function()
-            local dataBaru = getData()
-            if dataBaru ~= lastMessage then
-                sendToVercel(dataBaru)
-                lastMessage = dataBaru
-                sameCount = 0
-            else
-                sameCount = sameCount + 1
-                if sameCount >= maxSame then
-                    sendToVercel(dataBaru .. "\n\n🔄 Masih Berjalan di Redfinger: " .. os.date("%H:%M:%S"))
-                    sameCount = 0
-                end
-            end
-        end)
+        task.wait(10) -- perbarui setiap 10 detik
+        getDataDanTulis()
     end
 end)
-
-print("[Monitor] Siap di Redfinger!")
