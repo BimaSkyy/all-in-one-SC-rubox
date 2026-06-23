@@ -2,7 +2,7 @@
 -- VERSI RAPI UNTUK DELTA EXECUTOR
 -- ============================================================
 
-local webhook = "https://discord.com/api/webhooks/1518959286523527168/yOIrqGiR2i159iMFjJQveCInzU3tejRJ1CmF3OHtS2CU6IY2ZJlPf4zp-1KPtG3t_oEf"
+local webhook = "https://discord.com/api/webhooks/1518974323656753323/mtoqg0QW-Co8vZK2rW7XavRx69J6J8KsnIzY7pNaHWIKIiWjZBrvSSr1Z5muddjHwPm1"
 
 -- ============================================================
 -- FUNGSI FORMAT ANGKA
