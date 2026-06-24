@@ -13,7 +13,7 @@ local TweenService  = game:GetService("TweenService")
 local LP = Players.LocalPlayer
 
 -- ── WALK SPEED (stud/detik, samain sama WalkSpeed default 16) ──
-local WALK_SPEED = 34
+local WALK_SPEED = 16
 local RADIUS     = 50
 
 -- ── PLOT ──────────────────────────────────────────────
