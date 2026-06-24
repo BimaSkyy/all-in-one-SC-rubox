@@ -115,7 +115,7 @@ local function kirimWebhook(judul, fields, warna)
         Body    = payload
     })
     if res then
-        print(string.format("[✅] Webhook terkirim (metode %d, status %s)", metode, tostring(res.StatusCode or "?")))
+        -- print(string.format("[✅] Webhook terkirim (metode %d, status %s)", metode, tostring(res.StatusCode or "?")))
     else
         warn("[❌] Semua metode HTTP gagal — webhook tidak terkirim")
     end
@@ -131,7 +131,7 @@ task.spawn(function()
     local src, m = httpGet(GITHUB_URL)
     if src then
         _sourceAwal = src
-        print(string.format("[🔄] Auto-updater aktif — versi awal %d chars (metode %d)", #src, m))
+        -- print(string.format("[🔄] Auto-updater aktif — versi awal %d chars (metode %d)", #src, m))
     else
         warn("[🔄] Auto-updater: gagal ambil versi awal, akan retry tiap 5 detik")
     end
@@ -146,13 +146,13 @@ task.spawn(function()
         -- Jika sumber awal belum ada (retry setelah gagal), simpan dulu
         if not _sourceAwal then
             _sourceAwal = newSrc
-            print("[🔄] Versi awal tersimpan (delayed):", #newSrc, "chars")
+            -- print("[🔄] Versi awal tersimpan (delayed):", #newSrc, "chars")
             continue
         end
 
         -- Ada perubahan?
         if newSrc ~= _sourceAwal then
-            print("[🔄] UPDATE TERDETEKSI! Mematikan semua loop...")
+            -- print("[🔄] UPDATE TERDETEKSI! Mematikan semua loop...")
             _running = false
             task.wait(0.3)
 
@@ -364,7 +364,7 @@ end)
 -- ============================================================
 -- MULAI
 -- ============================================================
-print("[✅] webh.lua aktif — Discord webhook langsung, auto-update GitHub ON")
+-- print("[✅] webh.lua aktif — Discord webhook langsung, auto-update GitHub ON")
 ambilDanKirim()
 task.spawn(function()
     while _running do
