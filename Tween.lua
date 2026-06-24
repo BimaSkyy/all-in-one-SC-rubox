@@ -13,7 +13,7 @@ local TweenService  = game:GetService("TweenService")
 local LP = Players.LocalPlayer
 
 -- ── WALK SPEED (stud/detik, samain sama WalkSpeed default 16) ──
-local WALK_SPEED = 16
+local WALK_SPEED = 34
 local RADIUS     = 50
 
 -- ── PLOT ──────────────────────────────────────────────
@@ -147,7 +147,7 @@ local function teleportNear(plant)
     if not hrp then return end
     local pos = plantPos(plant)
     if not pos then return end
-    hrp.CFrame = CFrame.new(pos + Vector3.new(5, 0, 0))
+    hrp.CFrame = CFrame.new(pos + Vector3.new(10, 0, 0))
 end
 
 -- ── CEK GERAK / LOMPAT ────────────────────────────────
@@ -249,7 +249,7 @@ RunService.Heartbeat:Connect(function(dt)
                 -- Glide jalan ke dekat tanaman target
                 local dest = plantPos(targets[targetIdx])
                 if dest then
-                    tweenWalkTo(dest + Vector3.new(5, 0, 0))
+                    tweenWalkTo(dest + Vector3.new(10, 0, 0))
                 end
             end
         end
