@@ -1,0 +1,484 @@
+-- ═════════════════════════════════════════════════════════════════
+--   Compact Toolbox: Spek | Startup | Suprise | Change Text
+-- ═════════════════════════════════════════════════════════════════
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ═══ CONFIG ═══
+local HEIGHT_ABOVE = 2000        -- stud di atas player untuk SignWhiteBig
+local SIGN_FRONT_DIST = 5      -- stud di depan player saat Change Text
+
+-- ═══ STATE ═══
+local selectedPlayer = nil
+local isSpectating = false
+local isMinimized = false
+
+-- Startup props
+local surBeanProp = nil       -- GirlyBeanBagPink
+local surSignProp = nil       -- SignWhiteBig
+
+-- Suprise loop
+local surRunning = false
+local surConn = nil
+
+-- ═══ HELPERS ═══
+local function getTrafficCones()
+	local wsCom = workspace:FindFirstChild("WorkspaceCom")
+	return wsCom and wsCom:FindFirstChild("001_TrafficCones")
+end
+
+local function isSignProp(prop)
+	local clicky = prop:FindFirstChild("Clicky")
+	if not clicky then return false end
+	local sign3 = clicky:FindFirstChild("Sign3")
+	if not sign3 then return false end
+	return sign3:FindFirstChild("BoardNumberString") ~= nil
+end
+
+local function getSignId(prop)
+	local clicky = prop:FindFirstChild("Clicky")
+	if not clicky then return nil end
+	local sign3 = clicky:FindFirstChild("Sign3")
+	if not sign3 then return nil end
+	local bns = sign3:FindFirstChild("BoardNumberString")
+	if not bns then return nil end
+	return bns.Value
+end
+
+local function getHRP()
+	return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getSpawnPart()
+	local model = workspace:FindFirstChild("Model")
+	if not model then return nil end
+	local s1 = model:FindFirstChild("Street")
+	if not s1 then return nil end
+	return s1:FindFirstChild("Street")
+end
+
+-- Siapkan PropMaker + spawnPart, return tool, toolRemote, spawnPart
+local function getPropMakerReady()
+	local RE = ReplicatedStorage:WaitForChild("RE")
+	local tool = LocalPlayer.Character:FindFirstChild("PropMaker")
+		or LocalPlayer.Backpack:FindFirstChild("PropMaker")
+	if not tool then
+		RE["1Too1l"]:InvokeServer("PickingTools", "PropMaker")
+		task.wait(0.8)
+		tool = LocalPlayer.Character:FindFirstChild("PropMaker")
+			or LocalPlayer.Backpack:FindFirstChild("PropMaker")
+	end
+	if not tool or not tool:IsA("Tool") then
+		return nil
+	end
+	local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if not hum then return nil end
+	hum:EquipTool(tool)
+	task.wait(0.3)
+
+	pcall(function() RE["1Clea1rTool1s"]:FireServer("ClosePropMenu") end)
+	task.wait(0.15)
+
+	local hrp = getHRP()
+	if not hrp then return nil end
+
+	local spawnPart = getSpawnPart()
+	if not spawnPart then
+		local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -20, 0))
+		if ray and ray.Instance then spawnPart = ray.Instance end
+	end
+	if not spawnPart then return nil end
+
+	local toolRemote = tool:WaitForChild("Tool_PropMake", 10)
+	if not toolRemote then return nil end
+
+	return tool, toolRemote, spawnPart, hrp
+end
+
+-- ═══ GUI SETUP ═══
+local gui = Instance.new("ScreenGui", PlayerGui)
+gui.Name = "CompactToolbox"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- Panel utama (kecil untuk mobile)
+local panel = Instance.new("Frame", gui)
+panel.Size = UDim2.new(0, 150, 0, 260)
+panel.Position = UDim2.new(0.5, -75, 0.5, -130)
+panel.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+panel.BorderSizePixel = 0
+panel.ClipsDescendants = true
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 6)
+Instance.new("UIStroke", panel).Color = Color3.fromRGB(80, 80, 130)
+
+-- Header (drag + minimize)
+local header = Instance.new("TextButton", panel)
+header.Size = UDim2.new(1, 0, 0, 22)
+header.BackgroundColor3 = Color3.fromRGB(35, 35, 55)
+header.Text = "▼ Toolbox"
+header.TextColor3 = Color3.fromRGB(200, 200, 255)
+header.Font = Enum.Font.GothamBold
+header.TextSize = 10
+header.TextXAlignment = Enum.TextXAlignment.Left
+header.AutoButtonColor = false
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 6)
+
+-- Drag panel
+local dragging, dragStart, startPos = false, nil, nil
+header.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = panel.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then dragging = false end
+		end)
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		panel.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + delta.X,
+			startPos.Y.Scale, startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- Minimize
+header.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	if isMinimized then
+		header.Text = "▶ Toolbox"
+		panel:TweenSize(UDim2.new(0, 150, 0, 22), "In", "Quad", 0.2, true)
+	else
+		header.Text = "▼ Toolbox"
+		panel:TweenSize(UDim2.new(0, 150, 0, 260), "Out", "Quad", 0.2, true)
+	end
+end)
+
+-- ═══ CONTENT FRAME (untuk disembunyikan saat minimize) ═══
+local content = Instance.new("Frame", panel)
+content.Size = UDim2.new(1, 0, 1, -22)
+content.Position = UDim2.new(0, 0, 0, 22)
+content.BackgroundTransparency = 1
+
+-- ═══ BARIS TOMBOL ATAS (2x2) ═══
+local btnSpek = Instance.new("TextButton", content)
+btnSpek.Size = UDim2.new(0, 65, 0, 22)
+btnSpek.Position = UDim2.new(0, 5, 0, 4)
+btnSpek.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+btnSpek.Text = "Spek"
+btnSpek.TextColor3 = Color3.new(1,1,1)
+btnSpek.Font = Enum.Font.Gotham
+btnSpek.TextSize = 10
+btnSpek.AutoButtonColor = false
+Instance.new("UICorner", btnSpek).CornerRadius = UDim.new(0, 4)
+
+local btnStartup = Instance.new("TextButton", content)
+btnStartup.Size = UDim2.new(0, 65, 0, 22)
+btnStartup.Position = UDim2.new(0, 75, 0, 4)
+btnStartup.BackgroundColor3 = Color3.fromRGB(40, 80, 40)
+btnStartup.Text = "Startup"
+btnStartup.TextColor3 = Color3.new(1,1,1)
+btnStartup.Font = Enum.Font.Gotham
+btnStartup.TextSize = 10
+btnStartup.AutoButtonColor = false
+Instance.new("UICorner", btnStartup).CornerRadius = UDim.new(0, 4)
+
+local btnSuprise = Instance.new("TextButton", content)
+btnSuprise.Size = UDim2.new(0, 65, 0, 22)
+btnSuprise.Position = UDim2.new(0, 5, 0, 30)
+btnSuprise.BackgroundColor3 = Color3.fromRGB(70, 40, 90)
+btnSuprise.Text = "Suprise"
+btnSuprise.TextColor3 = Color3.new(1,1,1)
+btnSuprise.Font = Enum.Font.Gotham
+btnSuprise.TextSize = 10
+btnSuprise.AutoButtonColor = false
+Instance.new("UICorner", btnSuprise).CornerRadius = UDim.new(0, 4)
+
+local btnChangeText = Instance.new("TextButton", content)
+btnChangeText.Size = UDim2.new(0, 65, 0, 22)
+btnChangeText.Position = UDim2.new(0, 75, 0, 30)
+btnChangeText.BackgroundColor3 = Color3.fromRGB(80, 60, 30)
+btnChangeText.Text = "Chg Txt"
+btnChangeText.TextColor3 = Color3.new(1,1,1)
+btnChangeText.Font = Enum.Font.Gotham
+btnChangeText.TextSize = 10
+btnChangeText.AutoButtonColor = false
+Instance.new("UICorner", btnChangeText).CornerRadius = UDim.new(0, 4)
+
+-- ═══ PLAYER LIST (di bawah tombol) ═══
+local plistScrolling = Instance.new("ScrollingFrame", content)
+plistScrolling.Size = UDim2.new(1, -4, 1, -60)
+plistScrolling.Position = UDim2.new(0, 2, 0, 58)
+plistScrolling.BackgroundTransparency = 1
+plistScrolling.ScrollBarThickness = 2
+plistScrolling.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 150)
+plistScrolling.CanvasSize = UDim2.new(0, 0, 0, 0)
+plistScrolling.ZIndex = 2
+
+local playerButtons = {}
+local function refreshPlayerList()
+	for _, b in ipairs(playerButtons) do b:Destroy() end
+	playerButtons = {}
+	local y = 2
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer then
+			local btn = Instance.new("TextButton", plistScrolling)
+			btn.Size = UDim2.new(1, -4, 0, 20)
+			btn.Position = UDim2.new(0, 2, 0, y)
+			btn.BackgroundColor3 = (selectedPlayer == plr) and Color3.fromRGB(70, 70, 120) or Color3.fromRGB(35, 35, 55)
+			btn.Text = plr.Name
+			btn.TextColor3 = Color3.new(1,1,1)
+			btn.Font = Enum.Font.Gotham
+			btn.TextSize = 9
+			btn.AutoButtonColor = false
+			btn.ZIndex = 3
+			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
+			btn.MouseButton1Click:Connect(function()
+				selectedPlayer = (selectedPlayer == plr) and nil or plr
+				refreshPlayerList()
+			end)
+			table.insert(playerButtons, btn)
+			y = y + 22
+		end
+	end
+	plistScrolling.CanvasSize = UDim2.new(0, 0, 0, y + 2)
+end
+
+Players.PlayerAdded:Connect(refreshPlayerList)
+Players.PlayerRemoving:Connect(function(plr)
+	if selectedPlayer == plr then
+		selectedPlayer = nil
+		if isSpectating then stopSpectate() end
+	end
+	refreshPlayerList()
+end)
+
+-- ═══ FUNCTIONS ═══
+
+-- Spektator
+local function stopSpectate()
+	isSpectating = false
+	Camera.CameraSubject = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+	btnSpek.Text = "Spek"
+	btnSpek.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+end
+
+local function startSpectate()
+	if not selectedPlayer then return end
+	local hum = selectedPlayer.Character and selectedPlayer.Character:FindFirstChild("Humanoid")
+	if hum then
+		isSpectating = true
+		Camera.CameraSubject = hum
+		btnSpek.Text = "Stop"
+		btnSpek.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+	end
+end
+
+btnSpek.MouseButton1Click:Connect(function()
+	if isSpectating then stopSpectate() else startSpectate() end
+end)
+
+-- Startup
+btnStartup.MouseButton1Click:Connect(function()
+	if surBeanProp and surBeanProp.Parent and surSignProp and surSignProp.Parent then
+		StarterGui:SetCore("ChatMakeSystemMessage", {
+			Text = "Props sudah ada, tidak perlu spawn ulang.",
+			Color = Color3.fromRGB(255, 200, 100)
+		})
+		return
+	end
+
+	btnStartup.Text = "Wait..."
+	btnStartup.BackgroundColor3 = Color3.fromRGB(100, 100, 20)
+
+	task.spawn(function()
+		local RE = ReplicatedStorage:WaitForChild("RE")
+		local tool, toolRemote, spawnPart, hrp = getPropMakerReady()
+		if not tool then
+			btnStartup.Text = "Startup"
+			btnStartup.BackgroundColor3 = Color3.fromRGB(40, 80, 40)
+			return
+		end
+
+		local base = hrp.Position + hrp.CFrame.LookVector * 4
+		local tc = getTrafficCones()
+
+		-- Spawn GirlyBeanBagPink jika belum ada
+		if not surBeanProp or not surBeanProp.Parent then
+			RE["1Clea1rTool1s"]:FireServer("RequestingPropName", "GirlyBeanBagPink", "Girly", "Home")
+			task.wait(0.5)
+			local beanBefore = 0
+			if tc then
+				for _, o in ipairs(tc:GetChildren()) do
+					if o.Name == "Prop"..LocalPlayer.Name and not isSignProp(o) then beanBefore += 1 end
+				end
+			end
+			pcall(function() toolRemote:FireServer(spawnPart, base) end)
+			task.wait(2)
+			if tc then
+				local cnt = 0
+				for _, o in ipairs(tc:GetChildren()) do
+					if o.Name == "Prop"..LocalPlayer.Name and not isSignProp(o) then
+						cnt += 1
+						if cnt > beanBefore then surBeanProp = o; break end
+					end
+				end
+			end
+		end
+
+		-- Spawn SignWhiteBig jika belum ada
+		if not surSignProp or not surSignProp.Parent then
+			RE["1Clea1rTool1s"]:FireServer("RequestingPropName", "SignWhiteBig", "Sign", "Work")
+			task.wait(0.5)
+			local signBefore = 0
+			if tc then
+				for _, o in ipairs(tc:GetChildren()) do
+					if o.Name == "Prop"..LocalPlayer.Name and isSignProp(o) then signBefore += 1 end
+				end
+			end
+			pcall(function() toolRemote:FireServer(spawnPart, base + Vector3.new(2,0,0)) end)
+			task.wait(2)
+			if tc then
+				local cnt = 0
+				for _, o in ipairs(tc:GetChildren()) do
+					if o.Name == "Prop"..LocalPlayer.Name and isSignProp(o) then
+						cnt += 1
+						if cnt > signBefore then surSignProp = o; break end
+					end
+				end
+			end
+		end
+
+		if surBeanProp and surBeanProp.Parent and surSignProp and surSignProp.Parent then
+			btnStartup.Text = "Startup ✔"
+			btnStartup.BackgroundColor3 = Color3.fromRGB(30, 100, 60)
+			StarterGui:SetCore("ChatMakeSystemMessage", {
+				Text = "Startup selesai, props siap digunakan.",
+				Color = Color3.fromRGB(100, 255, 100)
+			})
+		else
+			btnStartup.Text = "Startup"
+			btnStartup.BackgroundColor3 = Color3.fromRGB(40, 80, 40)
+			StarterGui:SetCore("ChatMakeSystemMessage", {
+				Text = "Gagal spawn props.",
+				Color = Color3.fromRGB(255, 100, 100)
+			})
+		end
+	end)
+end)
+
+-- Suprise (Start/Stop)
+local function stopSupriseLoop()
+	if surConn then
+		surConn:Disconnect()
+		surConn = nil
+	end
+	surRunning = false
+	btnSuprise.Text = "Suprise"
+	btnSuprise.BackgroundColor3 = Color3.fromRGB(70, 40, 90)
+end
+
+local function startSupriseLoop()
+	if not selectedPlayer then
+		StarterGui:SetCore("ChatMakeSystemMessage", {
+			Text = "Pilih player dulu!",
+			Color = Color3.fromRGB(255, 150, 50)
+		})
+		return
+	end
+	if not surBeanProp or not surBeanProp.Parent or not surSignProp or not surSignProp.Parent then
+		StarterGui:SetCore("ChatMakeSystemMessage", {
+			Text = "Props belum ada, lakukan Startup dulu.",
+			Color = Color3.fromRGB(255, 150, 50)
+		})
+		return
+	end
+
+	surRunning = true
+	btnSuprise.Text = "Stop"
+	btnSuprise.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+
+	-- Posisikan SignWhiteBig di atas player local (statis)
+	local hrp = getHRP()
+	if hrp then
+		local signPos = hrp.Position + Vector3.new(0, HEIGHT_ABOVE, 0)
+		pcall(function() surSignProp.SetCurrentCFrame:InvokeServer(CFrame.new(signPos)) end)
+	end
+
+	surConn = RunService.Heartbeat:Connect(function()
+		if not surBeanProp or not surBeanProp.Parent then
+			stopSupriseLoop()
+			return
+		end
+		if not selectedPlayer or not selectedPlayer.Parent then
+			stopSupriseLoop()
+			return
+		end
+
+		local targetChar = selectedPlayer.Character
+		local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+		local targetHRP = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+		if not targetHum or not targetHRP then return end
+
+		if targetHum.Sit then
+			-- Teleport bean bag ke bawah sign (5 stud di bawah)
+			local myHRP = getHRP()
+			if myHRP then
+				local finalPos = myHRP.Position + Vector3.new(0, HEIGHT_ABOVE - 5, 0)
+				pcall(function() surBeanProp.SetCurrentCFrame:InvokeServer(CFrame.new(finalPos)) end)
+			end
+			stopSupriseLoop()
+		else
+			-- Oscillate di atas target
+			local offsetY = 0.5 + 1.5 * math.sin(tick() * 35)
+			local pos = targetHRP.Position + Vector3.new(0, offsetY, 0)
+			pcall(function() surBeanProp.SetCurrentCFrame:InvokeServer(CFrame.new(pos)) end)
+		end
+	end)
+end
+
+btnSuprise.MouseButton1Click:Connect(function()
+	if surRunning then
+		stopSupriseLoop()
+	else
+		startSupriseLoop()
+	end
+end)
+
+-- Change Text (pindahkan SignWhiteBig ke depan player)
+btnChangeText.MouseButton1Click:Connect(function()
+	if not surSignProp or not surSignProp.Parent then
+		StarterGui:SetCore("ChatMakeSystemMessage", {
+			Text = "SignWhiteBig belum ada, lakukan Startup dulu.",
+			Color = Color3.fromRGB(255, 150, 50)
+		})
+		return
+	end
+	local hrp = getHRP()
+	if hrp then
+		local frontPos = hrp.Position + hrp.CFrame.LookVector * SIGN_FRONT_DIST
+		pcall(function() surSignProp.SetCurrentCFrame:InvokeServer(CFrame.new(frontPos)) end)
+	end
+end)
+
+-- ═══ RESPAWN HANDLER ═══
+LocalPlayer.CharacterAdded:Connect(function()
+	if isSpectating then stopSpectate() end
+	if surRunning then stopSupriseLoop() end
+	-- Props tetap ada (tidak dihapus), referensi tetap valid selama tidak hilang
+end)
+
+-- ═══ INIT ═══
+refreshPlayerList()
+print("[CompactToolbox] Loaded – Spek | Startup | Suprise | Change Text")
