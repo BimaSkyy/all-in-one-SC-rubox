@@ -1,10 +1,12 @@
 --[==[
   PMT (Prop Magnet Tool) + SETTINGS PMT + Spectator
-  Perbaikan:
-  - Menambahkan tool "SETTINGS PMT" untuk mengatur parameter (tinggi, arah, radius, dll)
-  - Menambahkan tombol "Spek" di GUI Jail untuk mode spectator
-  - Memperbaiki error SEAT_FLY_HEIGHT tidak terdefinisi
-  - Menyempurnakan logic magnet & antena
+  Perbaikan & Penambahan:
+  - Memperbaiki fungsi Teleport (arah & tinggi sekarang benar-benar digunakan)
+  - Menambahkan tombol "Teleport" di GUI Jail untuk memindahkan target
+  - Menambahkan mode "Tempel" agar prop menempel langsung ke badan target (tanpa orbit)
+  - Menambahkan tombol "Tempel" di GUI Jail untuk toggle mode tempel
+  - Memperbaiki bug arah teleport yang selalu ke atas
+  - Menyempurnakan GUI (4 tombol)
 ]==]
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -40,7 +42,7 @@ local tool = nil
 local settingsTool = nil
 local touchConnection = nil
 local currentTarget = nil
-local jailFrame, jailBtn, spekBtn, nameLabel = nil, nil, nil, nil
+local jailFrame, jailBtn, tempelBtn, teleportBtn, spekBtn, nameLabel = nil, nil, nil, nil, nil, nil
 local updateLoop = nil
 local espHighlight = nil
 
@@ -55,6 +57,9 @@ local magnetRotAxis = Vector3.new(0.4, 1, 0.25).Unit
 -- Settings yang bisa diubah via tool "SETTINGS PMT"
 local teleportHeight = 5000
 local teleportDirection = "atas" -- "atas","bawah","kiri","kanan","depan","belakang"
+
+-- Mode tempel (prop nempel langsung ke badan, tidak orbit)
+local stickMode = false
 
 -- Spectator
 local spectating = false
@@ -211,6 +216,25 @@ local function getTeleportOffset(targetHRP)
         return -targetHRP.CFrame.LookVector * d
     end
     return Vector3.new(0, d, 0)
+end
+
+-- ═══ TELEPORT TARGET ═══
+local function teleportTarget(target)
+    if not target or not target.Character then return end
+    local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local offset = getTeleportOffset(hrp)
+    local targetPos = hrp.Position + offset
+
+    -- Ganti nama remote di bawah ini sesuai dengan game yang kamu gunakan
+    local teleportRemote = ReplicatedStorage:FindFirstChild("TeleportPlayer")
+        or (ReplicatedStorage:FindFirstChild("RE") and ReplicatedStorage.RE:FindFirstChild("TeleportPlayer"))
+    if teleportRemote then
+        teleportRemote:FireServer(target, targetPos)
+        print("[PMT] Teleport", target.Name, "ke", targetPos)
+    else
+        warn("[PMT] Remote TeleportPlayer tidak ditemukan. Silakan ganti nama remote yang benar pada script.")
+    end
 end
 
 -- ═══ ANTENA ═══
@@ -399,11 +423,12 @@ local function startMagnetOnTarget(target)
                         local occupantPlayer = occupantChar and Players:GetPlayerFromCharacter(occupantChar)
                         if occupantPlayer == target then
                             lockedProps[prop] = true
-                            local upPos = targetHRP.Position + Vector3.new(0, SEAT_FLY_HEIGHT, 0)
+                            -- Saat target duduk, prop diterbangkan sesuai arah teleport (bukan hanya atas)
+                            local flyPos = targetHRP.Position + getTeleportOffset(targetHRP)
                             local remote = getSetCFrameRemote(prop)
                             if remote then
                                 task.spawn(function()
-                                    pcall(function() remote:InvokeServer(CFrame.new(upPos)) end)
+                                    pcall(function() remote:InvokeServer(CFrame.new(flyPos)) end)
                                 end)
                             end
                         end
@@ -427,21 +452,34 @@ local function startMagnetOnTarget(target)
                 end
 
                 if #orbitChairs > 0 then
-                    if #magnetBaseDirs ~= #orbitChairs then
-                        magnetBaseDirs = generateFibonacciSphere(#orbitChairs)
-                    end
-                    magnetAngle = magnetAngle + MAGNET_SPEED * interval
-                    local rot = CFrame.fromAxisAngle(magnetRotAxis, magnetAngle)
-                    local centerPos = targetHRP.Position
-                    for i, prop in ipairs(orbitChairs) do
-                        local dir = magnetBaseDirs[i]
-                        local rotatedDir = rot:VectorToWorldSpace(dir)
-                        local pos = centerPos + rotatedDir * MAGNET_RADIUS
-                        local remote = getSetCFrameRemote(prop)
-                        if remote then
-                            task.spawn(function()
-                                pcall(function() remote:InvokeServer(CFrame.new(pos)) end)
-                            end)
+                    if stickMode then
+                        -- Mode tempel: semua prop aktif menempel langsung ke HRP target
+                        for _, prop in ipairs(orbitChairs) do
+                            local remote = getSetCFrameRemote(prop)
+                            if remote then
+                                task.spawn(function()
+                                    pcall(function() remote:InvokeServer(CFrame.new(targetHRP.Position)) end)
+                                end)
+                            end
+                        end
+                    else
+                        -- Mode orbit biasa
+                        if #magnetBaseDirs ~= #orbitChairs then
+                            magnetBaseDirs = generateFibonacciSphere(#orbitChairs)
+                        end
+                        magnetAngle = magnetAngle + MAGNET_SPEED * interval
+                        local rot = CFrame.fromAxisAngle(magnetRotAxis, magnetAngle)
+                        local centerPos = targetHRP.Position
+                        for i, prop in ipairs(orbitChairs) do
+                            local dir = magnetBaseDirs[i]
+                            local rotatedDir = rot:VectorToWorldSpace(dir)
+                            local pos = centerPos + rotatedDir * MAGNET_RADIUS
+                            local remote = getSetCFrameRemote(prop)
+                            if remote then
+                                task.spawn(function()
+                                    pcall(function() remote:InvokeServer(CFrame.new(pos)) end)
+                                end)
+                            end
                         end
                     end
                 end
@@ -481,7 +519,7 @@ local function stopSpectate()
     end
 end
 
--- ═══ GUI JAIL & SPEK (muncul saat klik player) ═══
+-- ═══ GUI JAIL, TEMPEL, TELEPORT & SPEK ═══
 local function createJailGui()
     if jailFrame then return end
 
@@ -492,12 +530,14 @@ local function createJailGui()
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
     jailFrame = Instance.new("Frame", screenGui)
-    jailFrame.Size = UDim2.new(0, 130, 0, 70)
+    jailFrame.Size = UDim2.new(0, 130, 0, 120) -- diperbesar untuk 4 tombol
     jailFrame.BackgroundTransparency = 1
     jailFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 
+    -- Tombol Jail
     jailBtn = Instance.new("TextButton", jailFrame)
     jailBtn.Size = UDim2.new(1, 0, 0, 24)
+    jailBtn.Position = UDim2.new(0, 0, 0, 0)
     jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
     jailBtn.Text = "Jail"
     jailBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -506,9 +546,34 @@ local function createJailGui()
     jailBtn.AutoButtonColor = false
     Instance.new("UICorner", jailBtn).CornerRadius = UDim.new(0, 6)
 
+    -- Tombol Tempel (toggle stick mode)
+    tempelBtn = Instance.new("TextButton", jailFrame)
+    tempelBtn.Size = UDim2.new(1, 0, 0, 24)
+    tempelBtn.Position = UDim2.new(0, 0, 0, 26)
+    tempelBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+    tempelBtn.Text = "Tempel: OFF"
+    tempelBtn.TextColor3 = Color3.new(1, 1, 1)
+    tempelBtn.Font = Enum.Font.GothamBold
+    tempelBtn.TextSize = 14
+    tempelBtn.AutoButtonColor = false
+    Instance.new("UICorner", tempelBtn).CornerRadius = UDim.new(0, 6)
+
+    -- Tombol Teleport
+    teleportBtn = Instance.new("TextButton", jailFrame)
+    teleportBtn.Size = UDim2.new(1, 0, 0, 24)
+    teleportBtn.Position = UDim2.new(0, 0, 0, 52)
+    teleportBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 200)
+    teleportBtn.Text = "Teleport"
+    teleportBtn.TextColor3 = Color3.new(1, 1, 1)
+    teleportBtn.Font = Enum.Font.GothamBold
+    teleportBtn.TextSize = 14
+    teleportBtn.AutoButtonColor = false
+    Instance.new("UICorner", teleportBtn).CornerRadius = UDim.new(0, 6)
+
+    -- Tombol Spek
     spekBtn = Instance.new("TextButton", jailFrame)
     spekBtn.Size = UDim2.new(1, 0, 0, 24)
-    spekBtn.Position = UDim2.new(0, 0, 0, 26)
+    spekBtn.Position = UDim2.new(0, 0, 0, 78)
     spekBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
     spekBtn.Text = "Spek"
     spekBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -517,9 +582,10 @@ local function createJailGui()
     spekBtn.AutoButtonColor = false
     Instance.new("UICorner", spekBtn).CornerRadius = UDim.new(0, 6)
 
+    -- Label nama target
     nameLabel = Instance.new("TextLabel", jailFrame)
     nameLabel.Size = UDim2.new(1, 0, 0, 18)
-    nameLabel.Position = UDim2.new(0, 0, 0, 52)
+    nameLabel.Position = UDim2.new(0, 0, 0, 104)
     nameLabel.BackgroundTransparency = 1
     nameLabel.Text = ""
     nameLabel.TextColor3 = Color3.new(1, 1, 1)
@@ -527,17 +593,35 @@ local function createJailGui()
     nameLabel.TextSize = 11
     nameLabel.TextStrokeTransparency = 0.5
 
+    -- Event tombol
     jailBtn.MouseButton1Click:Connect(function()
         local target = currentTarget
         if not target then return end
         if magnetRunning and magnetTarget == target then
             stopMagnet()
         else
-            stopMagnet() -- berhenti dulu jika ada magnet lain
+            stopMagnet()
             task.spawn(function()
                 startMagnetOnTarget(target)
             end)
         end
+    end)
+
+    tempelBtn.MouseButton1Click:Connect(function()
+        stickMode = not stickMode
+        if stickMode then
+            tempelBtn.Text = "Tempel: ON"
+            tempelBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+        else
+            tempelBtn.Text = "Tempel: OFF"
+            tempelBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+        end
+    end)
+
+    teleportBtn.MouseButton1Click:Connect(function()
+        local target = currentTarget
+        if not target then return end
+        teleportTarget(target)
     end)
 
     spekBtn.MouseButton1Click:Connect(function()
@@ -556,11 +640,13 @@ local function destroyJailGui()
         updateLoop:Disconnect()
         updateLoop = nil
     end
-    stopSpectate() -- hentikan spectate jika GUI hilang
+    stopSpectate()
     if jailFrame then
         jailFrame:Destroy()
         jailFrame = nil
         jailBtn = nil
+        tempelBtn = nil
+        teleportBtn = nil
         spekBtn = nil
         nameLabel = nil
     end
@@ -582,12 +668,21 @@ local function showJailGuiForPlayer(targetPlayer)
     createJailGui()
     nameLabel.Text = targetPlayer.Name
 
+    -- Update tampilan tombol sesuai state
     if magnetRunning and magnetTarget == targetPlayer then
         jailBtn.Text = "Jailing..."
         jailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
     else
         jailBtn.Text = "Jail"
         jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
+    end
+
+    if stickMode then
+        tempelBtn.Text = "Tempel: ON"
+        tempelBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+    else
+        tempelBtn.Text = "Tempel: OFF"
+        tempelBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
     end
 
     if spectating and spectateTarget == targetPlayer then
@@ -652,7 +747,7 @@ local function onInputBegan(input, gameProcessed)
     end
 end
 
--- ═══ TOOL: PMT (Jail + Spek + Klik player) ═══
+-- ═══ TOOL: PMT ═══
 local function createPMTTool()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not backpack then return end
@@ -662,7 +757,7 @@ local function createPMTTool()
     tool.Name = TOOL_NAME
     tool.RequiresHandle = false
     tool.CanBeDropped = false
-    tool.ToolTip = "Klik player -> Jail / Spektator"
+    tool.ToolTip = "Klik player -> Jail / Tempel / Teleport / Spektator"
 
     tool.Equipped:Connect(function()
         touchConnection = UserInputService.InputBegan:Connect(onInputBegan)
@@ -708,7 +803,7 @@ local function createSettingsGui()
     title.TextSize = 14
     title.TextColor3 = Color3.new(1, 1, 1)
 
-    -- Teleport Height
+    -- Teleport Height (digunakan oleh tombol Teleport)
     local lblH = Instance.new("TextLabel", frame)
     lblH.Size = UDim2.new(0, 100, 0, 20)
     lblH.Position = UDim2.new(0, 10, 0, 35)
@@ -798,7 +893,7 @@ local function createSettingsGui()
         end
     end)
 
-    -- Seat Fly Height
+    -- Seat Fly Height (digunakan saat target duduk, prop diterbangkan sesuai arah teleport)
     local lblSFH = Instance.new("TextLabel", frame)
     lblSFH.Size = UDim2.new(0, 100, 0, 20)
     lblSFH.Position = UDim2.new(0, 10, 0, 125)
@@ -845,7 +940,7 @@ local function createSettingsTool()
     settingsTool.Name = SETTINGS_TOOL_NAME
     settingsTool.RequiresHandle = false
     settingsTool.CanBeDropped = false
-    settingsTool.ToolTip = "Atur parameter PMT"
+    settingsTool.ToolTip = "Atur parameter PMT (teleport, magnet, dll)"
 
     settingsTool.Equipped:Connect(function()
         createSettingsGui()
@@ -868,7 +963,6 @@ LocalPlayer.CharacterAdded:Connect(function()
         createAntennaDistanceGui(magnetTarget)
     end
     if spectating then
-        -- jika target masih ada, pasang kembali camera
         if spectateTarget and spectateTarget.Character then
             local hum = spectateTarget.Character:FindFirstChildOfClass("Humanoid")
             if hum then
@@ -885,4 +979,4 @@ if LocalPlayer.Character then
     createSettingsTool()
 end
 
-print("PMT script siap. Gunakan PMT untuk jail & spek, SETTINGS PMT untuk atur parameter.")
+print("PMT script siap. Gunakan PMT untuk Jail/Tempel/Teleport/Spek, SETTINGS PMT untuk atur parameter.")
