@@ -1,15 +1,11 @@
---[[
-    PMT (Player Magnet Tool) + SETTINGS PMT
-    - Item "PMT": klik player lain -> muncul nama + tombol Jail + tombol Spektator (+ ESP hijau + jarak stud).
-    - Item "SETTINGS PMT": munculin panel kecil di tengah layar buat atur ketinggian/jarak
-      teleport dan arah (Atas/Bawah/Kanan/Kiri/Depan/Belakang) yang dipakai saat target duduk kena Jail.
-    - Klik Jail -> tempel semua prop GirlyBeanBagPink ke target itu (orbit magnet).
-      * Kalau belum ada prop sama sekali -> spawn 15x dulu.
-      * Kalau udah ada (walau cuma 1) -> langsung dipakai, gak spawn ulang.
-    - Klik Spektator -> kamera bebas normal tapi subject-nya target (bukan kepala aku).
-    - Lepas item PMT -> magnet & spektator otomatis berhenti (prop nggak dihapus).
-    - Klik Jail lagi di target lain -> otomatis pindah nempel ke target baru.
-]]
+--[==[
+  PMT (Prop Magnet Tool) + SETTINGS PMT + Spectator
+  Perbaikan:
+  - Menambahkan tool "SETTINGS PMT" untuk mengatur parameter (tinggi, arah, radius, dll)
+  - Menambahkan tombol "Spek" di GUI Jail untuk mode spectator
+  - Memperbaiki error SEAT_FLY_HEIGHT tidak terdefinisi
+  - Menyempurnakan logic magnet & antena
+]==]
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -30,18 +26,14 @@ local PINK_CHAIR_CAT1 = "Girly"
 local PINK_CHAIR_CAT2 = "Home"
 local PINK_CHAIR_COUNT = 15
 
+-- Nilai default (bisa diubah lewat tool Settings)
 local MAGNET_RADIUS = 1
 local MAGNET_SPEED = 2
 local MAGNET_UPDATE_HZ = 24
+local SEAT_FLY_HEIGHT = 500 -- tinggi kursi saat target duduk (stud)
 
 local TELEPORT_HEIGHT_MIN = 0
 local TELEPORT_HEIGHT_MAX = 10000
-
-local directionOrder = {"Atas", "Bawah", "Kanan", "Kiri", "Depan", "Belakang"}
-local directionMap = {
-    Atas = "atas", Bawah = "bawah", Kanan = "kanan",
-    Kiri = "kiri", Depan = "depan", Belakang = "belakang",
-}
 
 -- ═══ STATE ═══
 local tool = nil
@@ -53,30 +45,37 @@ local updateLoop = nil
 local espHighlight = nil
 
 local pinkChairs = {}
-local lockedProps = {}  -- [prop] = true, udah "diduduki" & diterbangin, gak ikut orbit lagi
+local lockedProps = {}
 local magnetRunning = false
 local magnetTarget = nil
 local magnetBaseDirs = {}
 local magnetAngle = 0
 local magnetRotAxis = Vector3.new(0.4, 1, 0.25).Unit
 
--- Settings: ketinggian/jarak teleport & arahnya (diatur lewat tool SETTINGS PMT)
-local teleportHeight = 5000  -- stud
-local teleportDirection = "atas" -- default: atas
+-- Settings yang bisa diubah via tool "SETTINGS PMT"
+local teleportHeight = 5000
+local teleportDirection = "atas" -- "atas","bawah","kiri","kanan","depan","belakang"
 
--- Spektator
+-- Spectator
 local spectating = false
 local spectateTarget = nil
 local spectateWatchConn = nil
 
--- Antena garis hijau (kepala aku -> kepala target) + label jarak stud
+-- Antena
 local antennaBeam = nil
 local antennaAttach0 = nil
 local antennaAttach1 = nil
 local antennaDistanceGui = nil
 local antennaDistanceLabel = nil
 
--- ═══ HELPERS (sistem prop, sama kayak Compact Toolbox v2) ═══
+-- Mapping arah
+local directionOrder = {"Atas", "Bawah", "Kanan", "Kiri", "Depan", "Belakang"}
+local directionMap = {
+    Atas = "atas", Bawah = "bawah", Kanan = "kanan",
+    Kiri = "kiri", Depan = "depan", Belakang = "belakang",
+}
+
+-- ═══ HELPERS (Prop System) ═══
 local function getTrafficCones()
     local wsCom = Workspace:FindFirstChild("WorkspaceCom")
     return wsCom and wsCom:FindFirstChild("001_TrafficCones")
@@ -214,7 +213,7 @@ local function getTeleportOffset(targetHRP)
     return Vector3.new(0, d, 0)
 end
 
--- ═══ ANTENA (garis hijau kepala aku -> kepala target) + label jarak stud ═══
+-- ═══ ANTENA ═══
 local function destroyAntenna()
     if antennaBeam then antennaBeam:Destroy(); antennaBeam = nil end
     if antennaAttach0 then antennaAttach0:Destroy(); antennaAttach0 = nil end
@@ -290,26 +289,25 @@ local function createAntenna(target)
     antennaBeam.Parent = antennaAttach0
 end
 
--- Cek tiap frame apa attachment/beam masih valid (misal abis respawn), kalau nggak buat ulang
 local function ensureAntenna(target)
     local myHead = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
     local targetHead = target and target.Character and target.Character:FindFirstChild("Head")
     if not myHead or not targetHead then return end
-
     if antennaAttach0 and antennaAttach0.Parent == myHead
         and antennaAttach1 and antennaAttach1.Parent == targetHead
         and antennaBeam and antennaBeam.Parent then
-        return -- masih valid
+        return
     end
     createAntenna(target)
 end
 
--- ═══ MAGNET (tempel prop ke target) ═══
+-- ═══ MAGNET ═══
 local function stopMagnet()
     magnetRunning = false
     magnetTarget = nil
     lockedProps = {}
     destroyAntenna()
+    destroyAntennaDistanceGui()
     if jailBtn then
         jailBtn.Text = "Jail"
         jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
@@ -317,7 +315,6 @@ local function stopMagnet()
 end
 
 local function startMagnetOnTarget(target)
-    -- Scan dulu prop yang sudah ada di folder (manual atau sisa sebelumnya)
     local tc = getTrafficCones()
     local existing = {}
     if tc then
@@ -329,11 +326,10 @@ local function startMagnetOnTarget(target)
     end
     pinkChairs = existing
 
-    -- Kalau belum ada sama sekali baru spawn 15x
     if #pinkChairs == 0 then
         local tool2, toolRemote, spawnPart, hrp = getPropMakerReady()
         if not tool2 then
-            warn("[PMT] Gagal siapin PropMaker")
+            warn("[PMT] Gagal siapkan PropMaker")
             stopMagnet()
             return
         end
@@ -349,7 +345,7 @@ local function startMagnetOnTarget(target)
     end
 
     if #pinkChairs == 0 then
-        warn("[PMT] Gagal spawn prop, coba lagi.")
+        warn("[PMT] Gagal spawn prop.")
         stopMagnet()
         return
     end
@@ -361,6 +357,12 @@ local function startMagnetOnTarget(target)
     magnetAngle = 0
 
     createAntenna(target)
+    createAntennaDistanceGui(target)
+
+    if jailBtn then
+        jailBtn.Text = "Jailing..."
+        jailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
+    end
 
     task.spawn(function()
         local interval = 1 / MAGNET_UPDATE_HZ
@@ -373,8 +375,16 @@ local function startMagnetOnTarget(target)
             local targetHRP = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
             if targetHRP then
                 ensureAntenna(target)
+                ensureAntennaDistanceGui(target)
 
-                -- Prop yang belum "dikunci" (belum diduduki & diterbangin ke atas)
+                -- Update jarak di label
+                local myHead = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                local targetHead = targetChar:FindFirstChild("Head")
+                if myHead and targetHead and antennaDistanceLabel then
+                    local dist = (myHead.Position - targetHead.Position).Magnitude
+                    antennaDistanceLabel.Text = string.format("%.1f studs", dist)
+                end
+
                 local activeChairs = {}
                 for _, prop in ipairs(pinkChairs) do
                     if prop and prop.Parent and not lockedProps[prop] then
@@ -382,14 +392,12 @@ local function startMagnetOnTarget(target)
                     end
                 end
 
-                -- Cek tiap prop aktif: apa target lagi duduk di situ?
                 for _, prop in ipairs(activeChairs) do
                     local seat = getSeatFromProp(prop)
                     if seat and seat.Occupant then
                         local occupantChar = seat.Occupant.Parent
                         local occupantPlayer = occupantChar and Players:GetPlayerFromCharacter(occupantChar)
                         if occupantPlayer == target then
-                            -- Duduk! Kunci prop ini, terbangin ke atas, diemin di situ
                             lockedProps[prop] = true
                             local upPos = targetHRP.Position + Vector3.new(0, SEAT_FLY_HEIGHT, 0)
                             local remote = getSetCFrameRemote(prop)
@@ -402,14 +410,12 @@ local function startMagnetOnTarget(target)
                     end
                 end
 
-                -- Susun ulang, exclude yang baru dikunci
                 local orbitChairs = {}
                 for _, prop in ipairs(activeChairs) do
                     if not lockedProps[prop] then table.insert(orbitChairs, prop) end
                 end
 
                 if #orbitChairs == 0 and #activeChairs == 0 and #pinkChairs > 0 then
-                    -- Semua prop udah "habis" (locked semua atau ilang), berhenti
                     local anyAlive = false
                     for _, prop in ipairs(pinkChairs) do
                         if prop and prop.Parent then anyAlive = true; break end
@@ -445,7 +451,37 @@ local function startMagnetOnTarget(target)
     end)
 end
 
--- ═══ GUI tombol Jail di layar (muncul saat klik player) ═══
+-- ═══ SPECTATOR ═══
+local function startSpectate(target)
+    if spectating then stopSpectate() end
+    if not target or not target.Character then return end
+    local hum = target.Character:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    spectating = true
+    spectateTarget = target
+    Camera.CameraSubject = hum
+    if spekBtn then
+        spekBtn.Text = "Stop Spek"
+        spekBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+    end
+end
+
+local function stopSpectate()
+    if not spectating then return end
+    spectating = false
+    local myHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if myHum then
+        Camera.CameraSubject = myHum
+    end
+    spectateTarget = nil
+    if spekBtn then
+        spekBtn.Text = "Spek"
+        spekBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
+    end
+end
+
+-- ═══ GUI JAIL & SPEK (muncul saat klik player) ═══
 local function createJailGui()
     if jailFrame then return end
 
@@ -456,7 +492,7 @@ local function createJailGui()
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
     jailFrame = Instance.new("Frame", screenGui)
-    jailFrame.Size = UDim2.new(0, 100, 0, 42)
+    jailFrame.Size = UDim2.new(0, 130, 0, 70)
     jailFrame.BackgroundTransparency = 1
     jailFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 
@@ -470,9 +506,20 @@ local function createJailGui()
     jailBtn.AutoButtonColor = false
     Instance.new("UICorner", jailBtn).CornerRadius = UDim.new(0, 6)
 
+    spekBtn = Instance.new("TextButton", jailFrame)
+    spekBtn.Size = UDim2.new(1, 0, 0, 24)
+    spekBtn.Position = UDim2.new(0, 0, 0, 26)
+    spekBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
+    spekBtn.Text = "Spek"
+    spekBtn.TextColor3 = Color3.new(1, 1, 1)
+    spekBtn.Font = Enum.Font.GothamBold
+    spekBtn.TextSize = 14
+    spekBtn.AutoButtonColor = false
+    Instance.new("UICorner", spekBtn).CornerRadius = UDim.new(0, 6)
+
     nameLabel = Instance.new("TextLabel", jailFrame)
     nameLabel.Size = UDim2.new(1, 0, 0, 18)
-    nameLabel.Position = UDim2.new(0, 0, 0, 26)
+    nameLabel.Position = UDim2.new(0, 0, 0, 52)
     nameLabel.BackgroundTransparency = 1
     nameLabel.Text = ""
     nameLabel.TextColor3 = Color3.new(1, 1, 1)
@@ -483,15 +530,23 @@ local function createJailGui()
     jailBtn.MouseButton1Click:Connect(function()
         local target = currentTarget
         if not target then return end
-
         if magnetRunning and magnetTarget == target then
             stopMagnet()
         else
-            jailBtn.Text = "Jailing..."
-            jailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
+            stopMagnet() -- berhenti dulu jika ada magnet lain
             task.spawn(function()
                 startMagnetOnTarget(target)
             end)
+        end
+    end)
+
+    spekBtn.MouseButton1Click:Connect(function()
+        local target = currentTarget
+        if not target then return end
+        if spectating and spectateTarget == target then
+            stopSpectate()
+        else
+            startSpectate(target)
         end
     end)
 end
@@ -501,10 +556,12 @@ local function destroyJailGui()
         updateLoop:Disconnect()
         updateLoop = nil
     end
+    stopSpectate() -- hentikan spectate jika GUI hilang
     if jailFrame then
         jailFrame:Destroy()
         jailFrame = nil
         jailBtn = nil
+        spekBtn = nil
         nameLabel = nil
     end
     local gui = PlayerGui:FindFirstChild("PMTJailGui")
@@ -525,10 +582,20 @@ local function showJailGuiForPlayer(targetPlayer)
     createJailGui()
     nameLabel.Text = targetPlayer.Name
 
-    -- Kalau target ini lagi di-magnet, refleksikan status merah di tombol
     if magnetRunning and magnetTarget == targetPlayer then
         jailBtn.Text = "Jailing..."
         jailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
+    else
+        jailBtn.Text = "Jail"
+        jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
+    end
+
+    if spectating and spectateTarget == targetPlayer then
+        spekBtn.Text = "Stop Spek"
+        spekBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+    else
+        spekBtn.Text = "Spek"
+        spekBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
     end
 
     if targetPlayer.Character then
@@ -564,7 +631,7 @@ local function showJailGuiForPlayer(targetPlayer)
     end)
 end
 
--- ═══ Deteksi klik/sentuh pada player (hanya aktif saat PMT dipegang) ═══
+-- ═══ INPUT HANDLER (hanya aktif saat tool PMT dipegang) ═══
 local function onInputBegan(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
@@ -585,17 +652,17 @@ local function onInputBegan(input, gameProcessed)
     end
 end
 
--- ═══ Tool management ═══
-local function createToolIfNeeded()
+-- ═══ TOOL: PMT (Jail + Spek + Klik player) ═══
+local function createPMTTool()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not backpack then return end
     if backpack:FindFirstChild(TOOL_NAME) then return end
 
     tool = Instance.new("Tool")
     tool.Name = TOOL_NAME
-    tool.RequiresHandle = false -- gak perlu handle -> gak ada item fisik / animasi pegang
+    tool.RequiresHandle = false
     tool.CanBeDropped = false
-    tool.ToolTip = "Klik player lain -> Jail"
+    tool.ToolTip = "Klik player -> Jail / Spektator"
 
     tool.Equipped:Connect(function()
         touchConnection = UserInputService.InputBegan:Connect(onInputBegan)
@@ -604,6 +671,7 @@ local function createToolIfNeeded()
     tool.Unequipped:Connect(function()
         destroyJailGui()
         stopMagnet()
+        stopSpectate()
         if touchConnection then
             touchConnection:Disconnect()
             touchConnection = nil
@@ -613,17 +681,208 @@ local function createToolIfNeeded()
     tool.Parent = backpack
 end
 
--- ═══ Respawn ═══
+-- ═══ GUI UNTUK TOOL SETTINGS ═══
+local settingsGui = nil
+
+local function createSettingsGui()
+    if settingsGui then settingsGui:Destroy() end
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "PMTSettingsGui"
+    sg.Parent = PlayerGui
+    sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    local frame = Instance.new("Frame", sg)
+    frame.Size = UDim2.new(0, 220, 0, 150)
+    frame.Position = UDim2.new(0.5, -110, 0.5, -75)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+    local title = Instance.new("TextLabel", frame)
+    title.Size = UDim2.new(1, -20, 0, 25)
+    title.Position = UDim2.new(0, 10, 0, 5)
+    title.BackgroundTransparency = 1
+    title.Text = "SETTINGS PMT"
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 14
+    title.TextColor3 = Color3.new(1, 1, 1)
+
+    -- Teleport Height
+    local lblH = Instance.new("TextLabel", frame)
+    lblH.Size = UDim2.new(0, 100, 0, 20)
+    lblH.Position = UDim2.new(0, 10, 0, 35)
+    lblH.BackgroundTransparency = 1
+    lblH.Text = "Teleport Height"
+    lblH.Font = Enum.Font.Gotham
+    lblH.TextSize = 12
+    lblH.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+
+    local inputH = Instance.new("TextBox", frame)
+    inputH.Size = UDim2.new(0, 80, 0, 20)
+    inputH.Position = UDim2.new(0, 120, 0, 35)
+    inputH.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    inputH.TextColor3 = Color3.new(1, 1, 1)
+    inputH.Font = Enum.Font.Gotham
+    inputH.TextSize = 12
+    inputH.Text = tostring(teleportHeight)
+    inputH.PlaceholderText = "studs"
+    inputH.FocusLost:Connect(function()
+        local n = tonumber(inputH.Text)
+        if n and n >= TELEPORT_HEIGHT_MIN and n <= TELEPORT_HEIGHT_MAX then
+            teleportHeight = n
+        else
+            inputH.Text = tostring(teleportHeight)
+        end
+    end)
+
+    -- Teleport Direction
+    local lblDir = Instance.new("TextLabel", frame)
+    lblDir.Size = UDim2.new(0, 100, 0, 20)
+    lblDir.Position = UDim2.new(0, 10, 0, 65)
+    lblDir.BackgroundTransparency = 1
+    lblDir.Text = "Direction"
+    lblDir.Font = Enum.Font.Gotham
+    lblDir.TextSize = 12
+    lblDir.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+
+    local dirIdx = 1
+    for i, v in ipairs(directionOrder) do
+        if directionMap[v] == teleportDirection then
+            dirIdx = i
+            break
+        end
+    end
+
+    local btnDir = Instance.new("TextButton", frame)
+    btnDir.Size = UDim2.new(0, 80, 0, 20)
+    btnDir.Position = UDim2.new(0, 120, 0, 65)
+    btnDir.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    btnDir.TextColor3 = Color3.new(1, 1, 1)
+    btnDir.Font = Enum.Font.Gotham
+    btnDir.TextSize = 12
+    btnDir.Text = directionOrder[dirIdx]
+    btnDir.AutoButtonColor = false
+    btnDir.MouseButton1Click:Connect(function()
+        dirIdx = dirIdx % #directionOrder + 1
+        local dirName = directionOrder[dirIdx]
+        teleportDirection = directionMap[dirName]
+        btnDir.Text = dirName
+    end)
+
+    -- Magnet Radius
+    local lblR = Instance.new("TextLabel", frame)
+    lblR.Size = UDim2.new(0, 100, 0, 20)
+    lblR.Position = UDim2.new(0, 10, 0, 95)
+    lblR.BackgroundTransparency = 1
+    lblR.Text = "Magnet Radius"
+    lblR.Font = Enum.Font.Gotham
+    lblR.TextSize = 12
+    lblR.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+
+    local inputR = Instance.new("TextBox", frame)
+    inputR.Size = UDim2.new(0, 80, 0, 20)
+    inputR.Position = UDim2.new(0, 120, 0, 95)
+    inputR.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    inputR.TextColor3 = Color3.new(1, 1, 1)
+    inputR.Font = Enum.Font.Gotham
+    inputR.TextSize = 12
+    inputR.Text = tostring(MAGNET_RADIUS)
+    inputR.PlaceholderText = "studs"
+    inputR.FocusLost:Connect(function()
+        local n = tonumber(inputR.Text)
+        if n and n > 0 then
+            MAGNET_RADIUS = n
+        else
+            inputR.Text = tostring(MAGNET_RADIUS)
+        end
+    end)
+
+    -- Seat Fly Height
+    local lblSFH = Instance.new("TextLabel", frame)
+    lblSFH.Size = UDim2.new(0, 100, 0, 20)
+    lblSFH.Position = UDim2.new(0, 10, 0, 125)
+    lblSFH.BackgroundTransparency = 1
+    lblSFH.Text = "Seat Fly Height"
+    lblSFH.Font = Enum.Font.Gotham
+    lblSFH.TextSize = 12
+    lblSFH.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+
+    local inputSFH = Instance.new("TextBox", frame)
+    inputSFH.Size = UDim2.new(0, 80, 0, 20)
+    inputSFH.Position = UDim2.new(0, 120, 0, 125)
+    inputSFH.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    inputSFH.TextColor3 = Color3.new(1, 1, 1)
+    inputSFH.Font = Enum.Font.Gotham
+    inputSFH.TextSize = 12
+    inputSFH.Text = tostring(SEAT_FLY_HEIGHT)
+    inputSFH.FocusLost:Connect(function()
+        local n = tonumber(inputSFH.Text)
+        if n and n > 0 then
+            SEAT_FLY_HEIGHT = n
+        else
+            inputSFH.Text = tostring(SEAT_FLY_HEIGHT)
+        end
+    end)
+
+    settingsGui = sg
+end
+
+local function destroySettingsGui()
+    if settingsGui then
+        settingsGui:Destroy()
+        settingsGui = nil
+    end
+end
+
+-- ═══ TOOL: SETTINGS PMT ═══
+local function createSettingsTool()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+    if backpack:FindFirstChild(SETTINGS_TOOL_NAME) then return end
+
+    settingsTool = Instance.new("Tool")
+    settingsTool.Name = SETTINGS_TOOL_NAME
+    settingsTool.RequiresHandle = false
+    settingsTool.CanBeDropped = false
+    settingsTool.ToolTip = "Atur parameter PMT"
+
+    settingsTool.Equipped:Connect(function()
+        createSettingsGui()
+    end)
+
+    settingsTool.Unequipped:Connect(function()
+        destroySettingsGui()
+    end)
+
+    settingsTool.Parent = backpack
+end
+
+-- ═══ RESPAWN HANDLER ═══
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.5)
-    createToolIfNeeded()
+    createPMTTool()
+    createSettingsTool()
     if magnetRunning and magnetTarget then
         createAntenna(magnetTarget)
+        createAntennaDistanceGui(magnetTarget)
+    end
+    if spectating then
+        -- jika target masih ada, pasang kembali camera
+        if spectateTarget and spectateTarget.Character then
+            local hum = spectateTarget.Character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                Camera.CameraSubject = hum
+            end
+        else
+            stopSpectate()
+        end
     end
 end)
 
 if LocalPlayer.Character then
-    createToolIfNeeded()
+    createPMTTool()
+    createSettingsTool()
 end
 
-print("[PMT] Siap - pegang item, klik player, klik Jail buat tempelin prop.")
+print("PMT script siap. Gunakan PMT untuk jail & spek, SETTINGS PMT untuk atur parameter.")
