@@ -13,8 +13,14 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- ═══ CONFIG ═══
-local HEIGHT_ABOVE = 2000        -- stud di atas player untuk SignWhiteBig
-local SIGN_FRONT_DIST = 5      -- stud di depan player saat Change Text
+local HEIGHT_ABOVE = 3000        -- stud di atas player untuk SignWhiteBig (papan)
+local SIGN_FRONT_DIST = 5        -- stud di depan player saat Change Text
+
+local LIGHT_COUNT = 13           -- jumlah LightsBlinkingColor
+local ORBIT_RADIUS = 12          -- radius orbit (stud) sekitar papan
+local ORBIT_SPEED = 6            -- rad/detik (cepat)
+local ORBIT_UPDATE_HZ = 24       -- rate update posisi/detik (lebih tinggi = lebih smooth)
+local LIGHT_TILT_ANGLE = math.rad(45)  -- "miring setengah" (45°), arahnya selalu menjauh dari papan
 
 -- ═══ STATE ═══
 local selectedPlayer = nil
@@ -22,8 +28,13 @@ local isSpectating = false
 local isMinimized = false
 
 -- Startup props
-local surBeanProp = nil       -- GirlyBeanBagPink
-local surSignProp = nil       -- SignWhiteBig
+local surBeanProp = nil       -- GirlyBeanBagPink (bangku)
+local surSignProp = nil       -- SignWhiteBig (papan)
+local surSignPos = nil        -- posisi statis papan (dipakai jadi pusat orbit)
+local surLights = {}          -- array of LightsBlinkingColor props
+
+-- Light orbit loop
+local lightOrbitRunning = false
 
 -- Suprise loop
 local surRunning = false
@@ -101,6 +112,69 @@ local function getPropMakerReady()
 	if not toolRemote then return nil end
 
 	return tool, toolRemote, spawnPart, hrp
+end
+
+-- Snapshot semua prop milik LocalPlayer di TrafficCones (dipakai buat deteksi prop baru)
+local function getMyProps()
+	local tc = getTrafficCones()
+	local set = {}
+	if tc then
+		for _, o in ipairs(tc:GetChildren()) do
+			if o.Name == "Prop"..LocalPlayer.Name then
+				set[o] = true
+			end
+		end
+	end
+	return set
+end
+
+local function findNewProp(before)
+	local tc = getTrafficCones()
+	if not tc then return nil end
+	for _, o in ipairs(tc:GetChildren()) do
+		if o.Name == "Prop"..LocalPlayer.Name and not before[o] then
+			return o
+		end
+	end
+	return nil
+end
+
+-- Baca posisi LIVE sebuah prop (Model/BasePart), dipakai biar orbit selalu ngikutin papan kemanapun dia pindah/gerak
+local function getPropPosition(prop)
+	if not prop or not prop.Parent then return nil end
+	if prop:IsA("Model") then
+		local ok, pivot = pcall(function() return prop:GetPivot() end)
+		if ok and pivot then return pivot.Position end
+		if prop.PrimaryPart then return prop.PrimaryPart.Position end
+	elseif prop:IsA("BasePart") then
+		return prop.Position
+	end
+	local part = prop:FindFirstChildWhichIsA("BasePart", true)
+	if part then return part.Position end
+	return nil
+end
+
+-- Cari RemoteFunction "SetCurrentCFrame" di prop. Dicari langsung dulu, kalau gak ada cari ke descendant
+-- (jaga-jaga kalau struktur LightsBlinkingColor beda dari papan/bangku)
+local function getSetCFrameRemote(prop)
+	if not prop then return nil end
+	local direct = prop:FindFirstChild("SetCurrentCFrame")
+	if direct then return direct end
+	return prop:FindFirstChild("SetCurrentCFrame", true)
+end
+
+-- Spawn 1 prop generik via RequestingPropName + Tool_PropMake, return instance prop barunya (atau nil)
+local function spawnGenericProp(toolRemote, spawnPart, propName, category1, category2, pos)
+	local RE = ReplicatedStorage:WaitForChild("RE")
+	local before = getMyProps()
+
+	RE["1Clea1rTool1s"]:FireServer("RequestingPropName", propName, category1, category2)
+	task.wait(0.5)
+
+	pcall(function() toolRemote:FireServer(spawnPart, pos) end)
+	task.wait(1.2)
+
+	return findNewProp(before)
 end
 
 -- ═══ GUI SETUP ═══
@@ -227,10 +301,12 @@ plistScrolling.CanvasSize = UDim2.new(0, 0, 0, 0)
 plistScrolling.ZIndex = 2
 
 local playerButtons = {}
+
 local function refreshPlayerList()
 	for _, b in ipairs(playerButtons) do b:Destroy() end
 	playerButtons = {}
-	local y = 2
+
+	local y = 0
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= LocalPlayer then
 			local btn = Instance.new("TextButton", plistScrolling)
@@ -289,13 +365,74 @@ btnSpek.MouseButton1Click:Connect(function()
 	if isSpectating then stopSpectate() else startSpectate() end
 end)
 
+-- ═══ LIGHT ORBIT (13x LightsBlinkingColor ngorbit papan, ngikutin kemanapun papan pindah) ═══
+local function stopLightOrbit()
+	lightOrbitRunning = false
+end
+
+local function startLightOrbit()
+	if lightOrbitRunning then return end
+	if not surSignProp or not surSignProp.Parent then return end
+	if #surLights == 0 then return end
+
+	lightOrbitRunning = true
+	print("[CompactToolbox] Light orbit dimulai, jumlah lampu: " .. #surLights)
+
+	task.spawn(function()
+		local interval = 1 / ORBIT_UPDATE_HZ
+		while lightOrbitRunning do
+			if not surSignProp or not surSignProp.Parent then
+				warn("[CompactToolbox] Papan hilang, orbit dihentikan.")
+				stopLightOrbit()
+				break
+			end
+
+			-- Ambil posisi PAPAN SAAT INI (live), jadi kalau papan pindah/gerak, lampu otomatis ikut
+			local signPos = getPropPosition(surSignProp)
+			if not signPos then
+				warn("[CompactToolbox] Gagal baca posisi papan (getPropPosition nil), skip tick ini.")
+				task.wait(interval)
+			else
+				local t = tick()
+				for i, light in ipairs(surLights) do
+					if light and light.Parent then
+						local angle = (i / LIGHT_COUNT) * (2 * math.pi) + t * ORBIT_SPEED
+						local outward = Vector3.new(math.cos(angle), 0, math.sin(angle))   -- arah menjauh dari papan
+						local tangent = Vector3.new(-math.sin(angle), 0, math.cos(angle))  -- sumbu buat miringin
+
+						local pos = signPos + outward * ORBIT_RADIUS
+						-- Miring 45° menjauhi papan: yang di belakang miring ke belakang, yang di kiri miring ke kiri, dst
+						local cf = CFrame.new(pos) * CFrame.fromAxisAngle(tangent, -LIGHT_TILT_ANGLE)
+
+						local remote = getSetCFrameRemote(light)
+						if remote then
+							-- Fire & forget (task.spawn) supaya InvokeServer yang lambat/nge-lag gak nge-block loop -> orbit jadi smooth
+							task.spawn(function()
+								local ok, err = pcall(function() remote:InvokeServer(cf) end)
+								if not ok then
+									warn("[CompactToolbox] Lampu #" .. i .. " gagal di-invoke: " .. tostring(err))
+								end
+							end)
+						else
+							warn("[CompactToolbox] Lampu #" .. i .. " gak ketemu remote SetCurrentCFrame-nya.")
+						end
+					end
+				end
+				task.wait(interval)
+			end
+		end
+	end)
+end
+
 -- Startup
 btnStartup.MouseButton1Click:Connect(function()
-	if surBeanProp and surBeanProp.Parent and surSignProp and surSignProp.Parent then
+	local lightsComplete = #surLights >= LIGHT_COUNT
+	if surBeanProp and surBeanProp.Parent and surSignProp and surSignProp.Parent and lightsComplete then
 		StarterGui:SetCore("ChatMakeSystemMessage", {
 			Text = "Props sudah ada, tidak perlu spawn ulang.",
 			Color = Color3.fromRGB(255, 200, 100)
 		})
+		if not lightOrbitRunning then startLightOrbit() end
 		return
 	end
 
@@ -303,7 +440,6 @@ btnStartup.MouseButton1Click:Connect(function()
 	btnStartup.BackgroundColor3 = Color3.fromRGB(100, 100, 20)
 
 	task.spawn(function()
-		local RE = ReplicatedStorage:WaitForChild("RE")
 		local tool, toolRemote, spawnPart, hrp = getPropMakerReady()
 		if not tool then
 			btnStartup.Text = "Startup"
@@ -312,67 +448,50 @@ btnStartup.MouseButton1Click:Connect(function()
 		end
 
 		local base = hrp.Position + hrp.CFrame.LookVector * 4
-		local tc = getTrafficCones()
 
-		-- Spawn GirlyBeanBagPink jika belum ada
+		-- 1) Bangku (GirlyBeanBagPink)
 		if not surBeanProp or not surBeanProp.Parent then
-			RE["1Clea1rTool1s"]:FireServer("RequestingPropName", "GirlyBeanBagPink", "Girly", "Home")
-			task.wait(0.5)
-			local beanBefore = 0
-			if tc then
-				for _, o in ipairs(tc:GetChildren()) do
-					if o.Name == "Prop"..LocalPlayer.Name and not isSignProp(o) then beanBefore += 1 end
-				end
-			end
-			pcall(function() toolRemote:FireServer(spawnPart, base) end)
-			task.wait(2)
-			if tc then
-				local cnt = 0
-				for _, o in ipairs(tc:GetChildren()) do
-					if o.Name == "Prop"..LocalPlayer.Name and not isSignProp(o) then
-						cnt += 1
-						if cnt > beanBefore then surBeanProp = o; break end
-					end
-				end
-			end
+			surBeanProp = spawnGenericProp(toolRemote, spawnPart, "GirlyBeanBagPink", "Girly", "Home", base)
 		end
 
-		-- Spawn SignWhiteBig jika belum ada
+		-- 2) Papan (SignWhiteBig) -> langsung ditaruh diam di HEIGHT_ABOVE
 		if not surSignProp or not surSignProp.Parent then
-			RE["1Clea1rTool1s"]:FireServer("RequestingPropName", "SignWhiteBig", "Sign", "Work")
-			task.wait(0.5)
-			local signBefore = 0
-			if tc then
-				for _, o in ipairs(tc:GetChildren()) do
-					if o.Name == "Prop"..LocalPlayer.Name and isSignProp(o) then signBefore += 1 end
-				end
-			end
-			pcall(function() toolRemote:FireServer(spawnPart, base + Vector3.new(2,0,0)) end)
-			task.wait(2)
-			if tc then
-				local cnt = 0
-				for _, o in ipairs(tc:GetChildren()) do
-					if o.Name == "Prop"..LocalPlayer.Name and isSignProp(o) then
-						cnt += 1
-						if cnt > signBefore then surSignProp = o; break end
-					end
-				end
+			surSignProp = spawnGenericProp(toolRemote, spawnPart, "SignWhiteBig", "Sign", "Work", base + Vector3.new(2, 0, 0))
+			if surSignProp then
+				surSignPos = hrp.Position + Vector3.new(0, HEIGHT_ABOVE, 0)
+				pcall(function() surSignProp.SetCurrentCFrame:InvokeServer(CFrame.new(surSignPos)) end)
 			end
 		end
 
-		if surBeanProp and surBeanProp.Parent and surSignProp and surSignProp.Parent then
+		-- 3) 13x LightsBlinkingColor, nanti orbit ngelilingin papan
+		if surSignProp and surSignProp.Parent then
+			for i = #surLights + 1, LIGHT_COUNT do
+				local tempPos = base + Vector3.new(i * 0.5, 0, 0)
+				local light = spawnGenericProp(toolRemote, spawnPart, "LightsBlinkingColor", "Lights", "Home", tempPos)
+				if light then
+					table.insert(surLights, light)
+				else
+					warn("[CompactToolbox] Gagal spawn LightsBlinkingColor #" .. i)
+				end
+				task.wait(0.2)
+			end
+		end
+
+		local allReady = surBeanProp and surBeanProp.Parent and surSignProp and surSignProp.Parent and #surLights >= LIGHT_COUNT
+		if allReady then
 			btnStartup.Text = "Startup ✔"
 			btnStartup.BackgroundColor3 = Color3.fromRGB(30, 100, 60)
 			StarterGui:SetCore("ChatMakeSystemMessage", {
-				Text = "Startup selesai, props siap digunakan.",
+				Text = "Startup selesai: papan, bangku, dan " .. #surLights .. "/" .. LIGHT_COUNT .. " lights siap.",
 				Color = Color3.fromRGB(100, 255, 100)
 			})
+			startLightOrbit()
 		else
 			btnStartup.Text = "Startup"
 			btnStartup.BackgroundColor3 = Color3.fromRGB(40, 80, 40)
 			StarterGui:SetCore("ChatMakeSystemMessage", {
-				Text = "Gagal spawn props.",
-				Color = Color3.fromRGB(255, 100, 100)
+				Text = "Startup belum lengkap (" .. #surLights .. "/" .. LIGHT_COUNT .. " lights).",
+				Color = Color3.fromRGB(255, 150, 100)
 			})
 		end
 	end)
@@ -409,7 +528,6 @@ local function startSupriseLoop()
 	btnSuprise.Text = "Stop"
 	btnSuprise.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
 
-	-- Posisikan SignWhiteBig di atas player local (statis)
 	local hrp = getHRP()
 	if hrp then
 		local signPos = hrp.Position + Vector3.new(0, HEIGHT_ABOVE, 0)
@@ -432,7 +550,6 @@ local function startSupriseLoop()
 		if not targetHum or not targetHRP then return end
 
 		if targetHum.Sit then
-			-- Teleport bean bag ke bawah sign (5 stud di bawah)
 			local myHRP = getHRP()
 			if myHRP then
 				local finalPos = myHRP.Position + Vector3.new(0, HEIGHT_ABOVE - 5, 0)
@@ -440,7 +557,6 @@ local function startSupriseLoop()
 			end
 			stopSupriseLoop()
 		else
-			-- Oscillate di atas target
 			local offsetY = 0.5 + 1.5 * math.sin(tick() * 35)
 			local pos = targetHRP.Position + Vector3.new(0, offsetY, 0)
 			pcall(function() surBeanProp.SetCurrentCFrame:InvokeServer(CFrame.new(pos)) end)
@@ -477,6 +593,7 @@ LocalPlayer.CharacterAdded:Connect(function()
 	if isSpectating then stopSpectate() end
 	if surRunning then stopSupriseLoop() end
 	-- Props tetap ada (tidak dihapus), referensi tetap valid selama tidak hilang
+	-- Light orbit tetap jalan karena baca posisi papan secara live tiap tick
 end)
 
 -- ═══ INIT ═══
