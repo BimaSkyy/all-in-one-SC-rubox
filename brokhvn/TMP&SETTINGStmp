@@ -1,0 +1,629 @@
+--[[
+    PMT (Player Magnet Tool) + SETTINGS PMT
+    - Item "PMT": klik player lain -> muncul nama + tombol Jail + tombol Spektator (+ ESP hijau + jarak stud).
+    - Item "SETTINGS PMT": munculin panel kecil di tengah layar buat atur ketinggian/jarak
+      teleport dan arah (Atas/Bawah/Kanan/Kiri/Depan/Belakang) yang dipakai saat target duduk kena Jail.
+    - Klik Jail -> tempel semua prop GirlyBeanBagPink ke target itu (orbit magnet).
+      * Kalau belum ada prop sama sekali -> spawn 15x dulu.
+      * Kalau udah ada (walau cuma 1) -> langsung dipakai, gak spawn ulang.
+    - Klik Spektator -> kamera bebas normal tapi subject-nya target (bukan kepala aku).
+    - Lepas item PMT -> magnet & spektator otomatis berhenti (prop nggak dihapus).
+    - Klik Jail lagi di target lain -> otomatis pindah nempel ke target baru.
+]]
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ═══ CONFIG ═══
+local TOOL_NAME = "PMT"
+local SETTINGS_TOOL_NAME = "SETTINGS PMT"
+local PINK_CHAIR_NAME = "GirlyBeanBagPink"
+local PINK_CHAIR_CAT1 = "Girly"
+local PINK_CHAIR_CAT2 = "Home"
+local PINK_CHAIR_COUNT = 15
+
+local MAGNET_RADIUS = 1
+local MAGNET_SPEED = 2
+local MAGNET_UPDATE_HZ = 24
+
+local TELEPORT_HEIGHT_MIN = 0
+local TELEPORT_HEIGHT_MAX = 10000
+
+local directionOrder = {"Atas", "Bawah", "Kanan", "Kiri", "Depan", "Belakang"}
+local directionMap = {
+    Atas = "atas", Bawah = "bawah", Kanan = "kanan",
+    Kiri = "kiri", Depan = "depan", Belakang = "belakang",
+}
+
+-- ═══ STATE ═══
+local tool = nil
+local settingsTool = nil
+local touchConnection = nil
+local currentTarget = nil
+local jailFrame, jailBtn, spekBtn, nameLabel = nil, nil, nil, nil
+local updateLoop = nil
+local espHighlight = nil
+
+local pinkChairs = {}
+local lockedProps = {}  -- [prop] = true, udah "diduduki" & diterbangin, gak ikut orbit lagi
+local magnetRunning = false
+local magnetTarget = nil
+local magnetBaseDirs = {}
+local magnetAngle = 0
+local magnetRotAxis = Vector3.new(0.4, 1, 0.25).Unit
+
+-- Settings: ketinggian/jarak teleport & arahnya (diatur lewat tool SETTINGS PMT)
+local teleportHeight = 5000  -- stud
+local teleportDirection = "atas" -- default: atas
+
+-- Spektator
+local spectating = false
+local spectateTarget = nil
+local spectateWatchConn = nil
+
+-- Antena garis hijau (kepala aku -> kepala target) + label jarak stud
+local antennaBeam = nil
+local antennaAttach0 = nil
+local antennaAttach1 = nil
+local antennaDistanceGui = nil
+local antennaDistanceLabel = nil
+
+-- ═══ HELPERS (sistem prop, sama kayak Compact Toolbox v2) ═══
+local function getTrafficCones()
+    local wsCom = Workspace:FindFirstChild("WorkspaceCom")
+    return wsCom and wsCom:FindFirstChild("001_TrafficCones")
+end
+
+local function getHRP()
+    return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getSpawnPart()
+    local model = Workspace:FindFirstChild("Model")
+    if not model then return nil end
+    local s1 = model:FindFirstChild("Street")
+    if not s1 then return nil end
+    return s1:FindFirstChild("Street")
+end
+
+local function getPropMakerReady()
+    local RE = ReplicatedStorage:WaitForChild("RE")
+    local tool2 = LocalPlayer.Character:FindFirstChild("PropMaker")
+        or LocalPlayer.Backpack:FindFirstChild("PropMaker")
+    if not tool2 then
+        RE["1Too1l"]:InvokeServer("PickingTools", "PropMaker")
+        task.wait(0.8)
+        tool2 = LocalPlayer.Character:FindFirstChild("PropMaker")
+            or LocalPlayer.Backpack:FindFirstChild("PropMaker")
+    end
+    if not tool2 or not tool2:IsA("Tool") then return nil end
+    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not hum then return nil end
+    hum:EquipTool(tool2)
+    task.wait(0.3)
+
+    pcall(function() RE["1Clea1rTool1s"]:FireServer("ClosePropMenu") end)
+    task.wait(0.15)
+
+    local hrp = getHRP()
+    if not hrp then return nil end
+
+    local spawnPart = getSpawnPart()
+    if not spawnPart then
+        local ray = Workspace:Raycast(hrp.Position, Vector3.new(0, -20, 0))
+        if ray and ray.Instance then spawnPart = ray.Instance end
+    end
+    if not spawnPart then return nil end
+
+    local toolRemote = tool2:WaitForChild("Tool_PropMake", 10)
+    if not toolRemote then return nil end
+
+    return tool2, toolRemote, spawnPart, hrp
+end
+
+local function getMyPropsSet()
+    local tc = getTrafficCones()
+    local set = {}
+    if tc then
+        for _, o in ipairs(tc:GetChildren()) do
+            if o.Name == "Prop"..LocalPlayer.Name then
+                set[o] = true
+            end
+        end
+    end
+    return set
+end
+
+local function findNewProp(before)
+    local tc = getTrafficCones()
+    if not tc then return nil end
+    for _, o in ipairs(tc:GetChildren()) do
+        if o.Name == "Prop"..LocalPlayer.Name and not before[o] then
+            return o
+        end
+    end
+    return nil
+end
+
+local function getSetCFrameRemote(prop)
+    if not prop then return nil end
+    local direct = prop:FindFirstChild("SetCurrentCFrame")
+    if direct then return direct end
+    return prop:FindFirstChild("SetCurrentCFrame", true)
+end
+
+local function spawnGenericProp(toolRemote, spawnPart, propName, category1, category2, pos)
+    local RE = ReplicatedStorage:WaitForChild("RE")
+    local before = getMyPropsSet()
+
+    RE["1Clea1rTool1s"]:FireServer("RequestingPropName", propName, category1, category2)
+    task.wait(0.5)
+
+    pcall(function() toolRemote:FireServer(spawnPart, pos) end)
+    task.wait(1.2)
+
+    return findNewProp(before)
+end
+
+local function getSeatFromProp(prop)
+    if not prop or not prop.Parent then return nil end
+    for _, desc in ipairs(prop:GetDescendants()) do
+        if desc:IsA("Seat") or desc:IsA("VehicleSeat") then return desc end
+    end
+    return nil
+end
+
+local function generateFibonacciSphere(n)
+    local pts = {}
+    local offset = 2 / n
+    local increment = math.pi * (3 - math.sqrt(5))
+    for i = 0, n - 1 do
+        local y = ((i * offset) - 1) + (offset / 2)
+        local r = math.sqrt(math.max(0, 1 - y * y))
+        local phi = i * increment
+        local x = math.cos(phi) * r
+        local z = math.sin(phi) * r
+        table.insert(pts, Vector3.new(x, y, z))
+    end
+    return pts
+end
+
+local function getTeleportOffset(targetHRP)
+    local d = teleportHeight
+    if teleportDirection == "atas" then
+        return Vector3.new(0, d, 0)
+    elseif teleportDirection == "bawah" then
+        return Vector3.new(0, -d, 0)
+    elseif teleportDirection == "kanan" then
+        return targetHRP.CFrame.RightVector * d
+    elseif teleportDirection == "kiri" then
+        return -targetHRP.CFrame.RightVector * d
+    elseif teleportDirection == "depan" then
+        return targetHRP.CFrame.LookVector * d
+    elseif teleportDirection == "belakang" then
+        return -targetHRP.CFrame.LookVector * d
+    end
+    return Vector3.new(0, d, 0)
+end
+
+-- ═══ ANTENA (garis hijau kepala aku -> kepala target) + label jarak stud ═══
+local function destroyAntenna()
+    if antennaBeam then antennaBeam:Destroy(); antennaBeam = nil end
+    if antennaAttach0 then antennaAttach0:Destroy(); antennaAttach0 = nil end
+    if antennaAttach1 then antennaAttach1:Destroy(); antennaAttach1 = nil end
+end
+
+local function destroyAntennaDistanceGui()
+    if antennaDistanceGui then
+        antennaDistanceGui:Destroy()
+        antennaDistanceGui = nil
+        antennaDistanceLabel = nil
+    end
+end
+
+local function createAntennaDistanceGui(target)
+    destroyAntennaDistanceGui()
+    local targetHead = target and target.Character and target.Character:FindFirstChild("Head")
+    if not targetHead then return end
+
+    antennaDistanceGui = Instance.new("BillboardGui")
+    antennaDistanceGui.Name = "PMTDistanceGui"
+    antennaDistanceGui.Adornee = targetHead
+    antennaDistanceGui.Size = UDim2.new(0, 90, 0, 20)
+    antennaDistanceGui.StudsOffset = Vector3.new(0, 1.3, 0)
+    antennaDistanceGui.AlwaysOnTop = true
+    antennaDistanceGui.Parent = targetHead
+
+    antennaDistanceLabel = Instance.new("TextLabel", antennaDistanceGui)
+    antennaDistanceLabel.Size = UDim2.new(1, 0, 1, 0)
+    antennaDistanceLabel.BackgroundTransparency = 1
+    antennaDistanceLabel.Text = "0 studs"
+    antennaDistanceLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    antennaDistanceLabel.Font = Enum.Font.GothamBold
+    antennaDistanceLabel.TextSize = 13
+    antennaDistanceLabel.TextStrokeTransparency = 0.4
+end
+
+local function ensureAntennaDistanceGui(target)
+    local targetHead = target and target.Character and target.Character:FindFirstChild("Head")
+    if not targetHead then return end
+    if antennaDistanceGui and antennaDistanceGui.Adornee == targetHead and antennaDistanceGui.Parent then
+        return
+    end
+    createAntennaDistanceGui(target)
+end
+
+local function createAntenna(target)
+    destroyAntenna()
+    local myHead = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+    local targetHead = target and target.Character and target.Character:FindFirstChild("Head")
+    if not myHead or not targetHead then return end
+
+    antennaAttach0 = Instance.new("Attachment")
+    antennaAttach0.Name = "PMTAntennaAttach0"
+    antennaAttach0.Position = Vector3.new(0, 0.6, 0)
+    antennaAttach0.Parent = myHead
+
+    antennaAttach1 = Instance.new("Attachment")
+    antennaAttach1.Name = "PMTAntennaAttach1"
+    antennaAttach1.Position = Vector3.new(0, 0.6, 0)
+    antennaAttach1.Parent = targetHead
+
+    antennaBeam = Instance.new("Beam")
+    antennaBeam.Attachment0 = antennaAttach0
+    antennaBeam.Attachment1 = antennaAttach1
+    antennaBeam.Width0 = 0.15
+    antennaBeam.Width1 = 0.15
+    antennaBeam.Color = ColorSequence.new(Color3.fromRGB(0, 255, 0))
+    antennaBeam.Transparency = NumberSequence.new(0.2)
+    antennaBeam.LightEmission = 0.5
+    antennaBeam.FaceCamera = true
+    antennaBeam.Segments = 1
+    antennaBeam.Parent = antennaAttach0
+end
+
+-- Cek tiap frame apa attachment/beam masih valid (misal abis respawn), kalau nggak buat ulang
+local function ensureAntenna(target)
+    local myHead = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+    local targetHead = target and target.Character and target.Character:FindFirstChild("Head")
+    if not myHead or not targetHead then return end
+
+    if antennaAttach0 and antennaAttach0.Parent == myHead
+        and antennaAttach1 and antennaAttach1.Parent == targetHead
+        and antennaBeam and antennaBeam.Parent then
+        return -- masih valid
+    end
+    createAntenna(target)
+end
+
+-- ═══ MAGNET (tempel prop ke target) ═══
+local function stopMagnet()
+    magnetRunning = false
+    magnetTarget = nil
+    lockedProps = {}
+    destroyAntenna()
+    if jailBtn then
+        jailBtn.Text = "Jail"
+        jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
+    end
+end
+
+local function startMagnetOnTarget(target)
+    -- Scan dulu prop yang sudah ada di folder (manual atau sisa sebelumnya)
+    local tc = getTrafficCones()
+    local existing = {}
+    if tc then
+        for _, o in ipairs(tc:GetChildren()) do
+            if o.Name == "Prop"..LocalPlayer.Name then
+                table.insert(existing, o)
+            end
+        end
+    end
+    pinkChairs = existing
+
+    -- Kalau belum ada sama sekali baru spawn 15x
+    if #pinkChairs == 0 then
+        local tool2, toolRemote, spawnPart, hrp = getPropMakerReady()
+        if not tool2 then
+            warn("[PMT] Gagal siapin PropMaker")
+            stopMagnet()
+            return
+        end
+        local base = hrp.Position + hrp.CFrame.LookVector * 4
+        for i = 1, PINK_CHAIR_COUNT do
+            local tempPos = base + Vector3.new((i % 5) * 1.2, math.floor(i / 5) * 1.2, 0)
+            local chair = spawnGenericProp(toolRemote, spawnPart, PINK_CHAIR_NAME, PINK_CHAIR_CAT1, PINK_CHAIR_CAT2, tempPos)
+            if chair then
+                table.insert(pinkChairs, chair)
+            end
+            task.wait(0.2)
+        end
+    end
+
+    if #pinkChairs == 0 then
+        warn("[PMT] Gagal spawn prop, coba lagi.")
+        stopMagnet()
+        return
+    end
+
+    magnetRunning = true
+    magnetTarget = target
+    lockedProps = {}
+    magnetBaseDirs = generateFibonacciSphere(#pinkChairs)
+    magnetAngle = 0
+
+    createAntenna(target)
+
+    task.spawn(function()
+        local interval = 1 / MAGNET_UPDATE_HZ
+        while magnetRunning and magnetTarget == target do
+            if not target or not target.Parent then
+                stopMagnet()
+                break
+            end
+            local targetChar = target.Character
+            local targetHRP = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+            if targetHRP then
+                ensureAntenna(target)
+
+                -- Prop yang belum "dikunci" (belum diduduki & diterbangin ke atas)
+                local activeChairs = {}
+                for _, prop in ipairs(pinkChairs) do
+                    if prop and prop.Parent and not lockedProps[prop] then
+                        table.insert(activeChairs, prop)
+                    end
+                end
+
+                -- Cek tiap prop aktif: apa target lagi duduk di situ?
+                for _, prop in ipairs(activeChairs) do
+                    local seat = getSeatFromProp(prop)
+                    if seat and seat.Occupant then
+                        local occupantChar = seat.Occupant.Parent
+                        local occupantPlayer = occupantChar and Players:GetPlayerFromCharacter(occupantChar)
+                        if occupantPlayer == target then
+                            -- Duduk! Kunci prop ini, terbangin ke atas, diemin di situ
+                            lockedProps[prop] = true
+                            local upPos = targetHRP.Position + Vector3.new(0, SEAT_FLY_HEIGHT, 0)
+                            local remote = getSetCFrameRemote(prop)
+                            if remote then
+                                task.spawn(function()
+                                    pcall(function() remote:InvokeServer(CFrame.new(upPos)) end)
+                                end)
+                            end
+                        end
+                    end
+                end
+
+                -- Susun ulang, exclude yang baru dikunci
+                local orbitChairs = {}
+                for _, prop in ipairs(activeChairs) do
+                    if not lockedProps[prop] then table.insert(orbitChairs, prop) end
+                end
+
+                if #orbitChairs == 0 and #activeChairs == 0 and #pinkChairs > 0 then
+                    -- Semua prop udah "habis" (locked semua atau ilang), berhenti
+                    local anyAlive = false
+                    for _, prop in ipairs(pinkChairs) do
+                        if prop and prop.Parent then anyAlive = true; break end
+                    end
+                    if not anyAlive then
+                        stopMagnet()
+                        break
+                    end
+                end
+
+                if #orbitChairs > 0 then
+                    if #magnetBaseDirs ~= #orbitChairs then
+                        magnetBaseDirs = generateFibonacciSphere(#orbitChairs)
+                    end
+                    magnetAngle = magnetAngle + MAGNET_SPEED * interval
+                    local rot = CFrame.fromAxisAngle(magnetRotAxis, magnetAngle)
+                    local centerPos = targetHRP.Position
+                    for i, prop in ipairs(orbitChairs) do
+                        local dir = magnetBaseDirs[i]
+                        local rotatedDir = rot:VectorToWorldSpace(dir)
+                        local pos = centerPos + rotatedDir * MAGNET_RADIUS
+                        local remote = getSetCFrameRemote(prop)
+                        if remote then
+                            task.spawn(function()
+                                pcall(function() remote:InvokeServer(CFrame.new(pos)) end)
+                            end)
+                        end
+                    end
+                end
+            end
+            task.wait(interval)
+        end
+    end)
+end
+
+-- ═══ GUI tombol Jail di layar (muncul saat klik player) ═══
+local function createJailGui()
+    if jailFrame then return end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "PMTJailGui"
+    screenGui.Parent = PlayerGui
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    jailFrame = Instance.new("Frame", screenGui)
+    jailFrame.Size = UDim2.new(0, 100, 0, 42)
+    jailFrame.BackgroundTransparency = 1
+    jailFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+
+    jailBtn = Instance.new("TextButton", jailFrame)
+    jailBtn.Size = UDim2.new(1, 0, 0, 24)
+    jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
+    jailBtn.Text = "Jail"
+    jailBtn.TextColor3 = Color3.new(1, 1, 1)
+    jailBtn.Font = Enum.Font.GothamBold
+    jailBtn.TextSize = 14
+    jailBtn.AutoButtonColor = false
+    Instance.new("UICorner", jailBtn).CornerRadius = UDim.new(0, 6)
+
+    nameLabel = Instance.new("TextLabel", jailFrame)
+    nameLabel.Size = UDim2.new(1, 0, 0, 18)
+    nameLabel.Position = UDim2.new(0, 0, 0, 26)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = ""
+    nameLabel.TextColor3 = Color3.new(1, 1, 1)
+    nameLabel.Font = Enum.Font.Gotham
+    nameLabel.TextSize = 11
+    nameLabel.TextStrokeTransparency = 0.5
+
+    jailBtn.MouseButton1Click:Connect(function()
+        local target = currentTarget
+        if not target then return end
+
+        if magnetRunning and magnetTarget == target then
+            stopMagnet()
+        else
+            jailBtn.Text = "Jailing..."
+            jailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
+            task.spawn(function()
+                startMagnetOnTarget(target)
+            end)
+        end
+    end)
+end
+
+local function destroyJailGui()
+    if updateLoop then
+        updateLoop:Disconnect()
+        updateLoop = nil
+    end
+    if jailFrame then
+        jailFrame:Destroy()
+        jailFrame = nil
+        jailBtn = nil
+        nameLabel = nil
+    end
+    local gui = PlayerGui:FindFirstChild("PMTJailGui")
+    if gui then gui:Destroy() end
+
+    if espHighlight then
+        espHighlight:Destroy()
+        espHighlight = nil
+    end
+
+    currentTarget = nil
+end
+
+local function showJailGuiForPlayer(targetPlayer)
+    destroyJailGui()
+
+    currentTarget = targetPlayer
+    createJailGui()
+    nameLabel.Text = targetPlayer.Name
+
+    -- Kalau target ini lagi di-magnet, refleksikan status merah di tombol
+    if magnetRunning and magnetTarget == targetPlayer then
+        jailBtn.Text = "Jailing..."
+        jailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
+    end
+
+    if targetPlayer.Character then
+        espHighlight = Instance.new("Highlight")
+        espHighlight.Name = "PMTEsp"
+        espHighlight.FillColor = Color3.fromRGB(0, 255, 0)
+        espHighlight.OutlineColor = Color3.fromRGB(0, 255, 0)
+        espHighlight.FillTransparency = 0.5
+        espHighlight.OutlineTransparency = 0
+        espHighlight.Adornee = targetPlayer.Character
+        espHighlight.Parent = targetPlayer.Character
+    end
+
+    updateLoop = RunService.RenderStepped:Connect(function()
+        if not currentTarget or not currentTarget.Character then
+            destroyJailGui()
+            return
+        end
+        local head = currentTarget.Character:FindFirstChild("Head")
+        if not head then
+            destroyJailGui()
+            return
+        end
+        local screenPos, onScreen = Camera:WorldToScreenPoint(head.Position + Vector3.new(0, 2, 0))
+        if not onScreen then
+            if jailFrame then jailFrame.Visible = false end
+            return
+        end
+        if jailFrame then
+            jailFrame.Visible = true
+            jailFrame.Position = UDim2.new(0, screenPos.X, 0, screenPos.Y)
+        end
+    end)
+end
+
+-- ═══ Deteksi klik/sentuh pada player (hanya aktif saat PMT dipegang) ═══
+local function onInputBegan(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+        return
+    end
+
+    local ray = Camera:ScreenPointToRay(input.Position.X, input.Position.Y)
+    local hit = Workspace:Raycast(ray.Origin, ray.Direction * 500)
+
+    if hit then
+        local targetChar = hit.Instance:FindFirstAncestorOfClass("Model")
+        if targetChar then
+            local targetPlayer = Players:GetPlayerFromCharacter(targetChar)
+            if targetPlayer and targetPlayer ~= LocalPlayer then
+                showJailGuiForPlayer(targetPlayer)
+            end
+        end
+    end
+end
+
+-- ═══ Tool management ═══
+local function createToolIfNeeded()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+    if backpack:FindFirstChild(TOOL_NAME) then return end
+
+    tool = Instance.new("Tool")
+    tool.Name = TOOL_NAME
+    tool.RequiresHandle = false -- gak perlu handle -> gak ada item fisik / animasi pegang
+    tool.CanBeDropped = false
+    tool.ToolTip = "Klik player lain -> Jail"
+
+    tool.Equipped:Connect(function()
+        touchConnection = UserInputService.InputBegan:Connect(onInputBegan)
+    end)
+
+    tool.Unequipped:Connect(function()
+        destroyJailGui()
+        stopMagnet()
+        if touchConnection then
+            touchConnection:Disconnect()
+            touchConnection = nil
+        end
+    end)
+
+    tool.Parent = backpack
+end
+
+-- ═══ Respawn ═══
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    createToolIfNeeded()
+    if magnetRunning and magnetTarget then
+        createAntenna(magnetTarget)
+    end
+end)
+
+if LocalPlayer.Character then
+    createToolIfNeeded()
+end
+
+print("[PMT] Siap - pegang item, klik player, klik Jail buat tempelin prop.")
