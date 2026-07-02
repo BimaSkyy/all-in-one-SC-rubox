@@ -1,0 +1,775 @@
+--[[
+  ADMIN JAIL + SETUP (Final)
+  - Semua prop (Prop<LocalPlayer.Name>) ikut ke kaki target saat jail (offset -3 stud).
+  - Termasuk prop spawn manual di luar setup.
+]]
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local RE = ReplicatedStorage:WaitForChild("RE")
+
+-- ═══ TOOL NAMES ═══
+local ADMIN_TOOL_NAME = "ADMIN JAIL"
+local SETUP_TOOL_NAME = "SETUP"
+
+-- ═══ PROP INFO ═══
+local PROP_TORCH = "TorchFire"
+local PROP_SIGN = "SignBlackBig"
+local PROP_FENCE = "BigHorseFence"
+local PROP_CAGE = "BigCage"
+local DEFAULT_SIGN_TEXT = "This Player Jailed"
+
+-- Offset spesial untuk 4 prop utama
+local OFFSET_CAGE  = CFrame.new(0, -5.5, 0)
+local OFFSET_FENCE = CFrame.new(1.5, -5.5, 0)
+local OFFSET_TORCH = CFrame.new(-1.5, -5.5, 0)
+local OFFSET_SIGN  = CFrame.new(0, 8, 0)
+
+-- Offset untuk semua prop lain (di kaki target)
+local DEFAULT_PROP_OFFSET = CFrame.new(0, -3, 0)  -- di bawah HRP
+
+local SKY_OFFSET = Vector3.new(0, 10000, 0)
+
+-- ═══ STATE ═══
+local adminTool, setupTool = nil, nil
+local touchConn = nil
+local currentTarget = nil
+local jailActive = false
+local jailTarget = nil
+local jailHeartbeat = nil
+
+local cageProp, fenceProp, torchProp, signProp = nil, nil, nil, nil
+
+local spectating = false
+local spectateTarget = nil
+
+local adminGuiFrame, jailBtn, timedJailBtn, spekBtn, nameLabel = nil, nil, nil, nil, nil
+local guiUpdateLoop = nil
+
+local antennaBeam, antennaAttach0, antennaAttach1 = nil, nil, nil
+local antennaDistanceGui, antennaDistanceLabel = nil, nil
+local antennaUpdateLoop = nil
+
+local jailTimerActive = false
+local jailTimerEnd = 0
+local jailTimerThread = nil
+
+local customJailText = nil
+
+-- ═══ HELPERS ═══
+local function getTrafficCones()
+    local wsCom = Workspace:FindFirstChild("WorkspaceCom")
+    return wsCom and wsCom:FindFirstChild("001_TrafficCones")
+end
+
+local function getSpawnPart()
+    local model = Workspace:FindFirstChild("Model")
+    if not model then return nil end
+    local s1 = model:FindFirstChild("Street")
+    if not s1 then return nil end
+    return s1:FindFirstChild("Street")
+end
+
+local function getPropMakerReady()
+    local tool2 = LocalPlayer.Character:FindFirstChild("PropMaker") 
+        or LocalPlayer.Backpack:FindFirstChild("PropMaker")
+    if not tool2 then
+        RE["1Too1l"]:InvokeServer("PickingTools", "PropMaker")
+        task.wait(0.8)
+        tool2 = LocalPlayer.Character:FindFirstChild("PropMaker") 
+            or LocalPlayer.Backpack:FindFirstChild("PropMaker")
+    end
+    if not tool2 or not tool2:IsA("Tool") then return nil end
+    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not hum then return nil end
+    hum:EquipTool(tool2)
+    task.wait(0.3)
+    pcall(function() RE["1Clea1rTool1s"]:FireServer("ClosePropMenu") end)
+    task.wait(0.15)
+    local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local spawnPart = getSpawnPart()
+    if not spawnPart then
+        local ray = Workspace:Raycast(hrp.Position, Vector3.new(0, -20, 0))
+        if ray and ray.Instance then spawnPart = ray.Instance end
+    end
+    if not spawnPart then return nil end
+    local toolRemote = tool2:WaitForChild("Tool_PropMake", 10)
+    if not toolRemote then return nil end
+    return tool2, toolRemote, spawnPart, hrp
+end
+
+local function spawnGenericProp(toolRemote, spawnPart, propName, category1, category2, pos)
+    local tc = getTrafficCones()
+    local before = {}
+    if tc then
+        for _, o in ipairs(tc:GetChildren()) do
+            if o.Name == "Prop"..LocalPlayer.Name then before[o] = true end
+        end
+    end
+    RE["1Clea1rTool1s"]:FireServer("RequestingPropName", propName, category1, category2)
+    task.wait(0.5)
+    pcall(function() toolRemote:FireServer(spawnPart, pos) end)
+    task.wait(1.5)
+    if tc then
+        for _, o in ipairs(tc:GetChildren()) do
+            if o.Name == "Prop"..LocalPlayer.Name and not before[o] then
+                return o
+            end
+        end
+    end
+    return nil
+end
+
+local function getSignId(prop)
+    if not prop or not prop.Parent then return nil end
+    local touch = prop:FindFirstChild("Touch") or prop:FindFirstChild("Clicky")
+    if not touch then return nil end
+    local sign2 = touch:FindFirstChild("Sign2")
+    if not sign2 then return nil end
+    local bns = sign2:FindFirstChild("BoardNumberString")
+    return bns and bns.Value or nil
+end
+
+local function setSignText(prop, text)
+    if not prop or not prop.Parent then return end
+    local id = getSignId(prop)
+    if not id then return end
+    pcall(function()
+        RE["1Cemeter1y"]:FireServer("ReturningBigSign2Name", id, text)
+    end)
+end
+
+-- ═══ SETUP PROPS ═══
+local function setupProps()
+    if cageProp and cageProp.Parent and fenceProp and fenceProp.Parent 
+        and torchProp and torchProp.Parent and signProp and signProp.Parent then
+        return true
+    end
+
+    local _, toolRemote, spawnPart, hrp = getPropMakerReady()
+    if not toolRemote then 
+        warn("PropMaker tidak siap") 
+        return false 
+    end
+
+    local basePos = hrp.Position + hrp.CFrame.LookVector * 4
+
+    torchProp = spawnGenericProp(toolRemote, spawnPart, PROP_TORCH, "Torch", "Decor", basePos)
+    signProp  = spawnGenericProp(toolRemote, spawnPart, PROP_SIGN, "Sign", "Work", basePos + Vector3.new(2,0,0))
+    fenceProp = spawnGenericProp(toolRemote, spawnPart, PROP_FENCE, "Big", "Home", basePos + Vector3.new(-2,0,0))
+    cageProp  = spawnGenericProp(toolRemote, spawnPart, PROP_CAGE, "Big", "Home", basePos + Vector3.new(0,0,2))
+
+    if not cageProp or not fenceProp or not torchProp or not signProp then
+        warn("Gagal spawn salah satu prop")
+        return false
+    end
+
+    task.wait(0.5)
+    setSignText(signProp, DEFAULT_SIGN_TEXT)
+    return true
+end
+
+-- ═══ ANTENA ═══
+local function destroyAntenna()
+    if antennaUpdateLoop then antennaUpdateLoop:Disconnect(); antennaUpdateLoop = nil end
+    if antennaBeam then antennaBeam:Destroy(); antennaBeam = nil end
+    if antennaAttach0 then antennaAttach0:Destroy(); antennaAttach0 = nil end
+    if antennaAttach1 then antennaAttach1:Destroy(); antennaAttach1 = nil end
+    if antennaDistanceGui then antennaDistanceGui:Destroy(); antennaDistanceGui = nil end
+    antennaDistanceLabel = nil
+end
+
+local function createAntenna(target)
+    destroyAntenna()
+    local myChar = LocalPlayer.Character
+    local targetChar = target and target.Character
+    if not myChar or not targetChar then return end
+    local myHead = myChar:FindFirstChild("Head")
+    local targetHead = targetChar:FindFirstChild("Head")
+    if not myHead or not targetHead then return end
+
+    antennaAttach0 = Instance.new("Attachment")
+    antennaAttach0.Position = Vector3.new(0, 0.5, 0)
+    antennaAttach0.Parent = myHead
+
+    antennaAttach1 = Instance.new("Attachment")
+    antennaAttach1.Position = Vector3.new(0, 0.5, 0)
+    antennaAttach1.Parent = targetHead
+
+    antennaBeam = Instance.new("Beam")
+    antennaBeam.Attachment0 = antennaAttach0
+    antennaBeam.Attachment1 = antennaAttach1
+    antennaBeam.Width0 = 0.12
+    antennaBeam.Width1 = 0.12
+    antennaBeam.Color = ColorSequence.new(Color3.fromRGB(0, 255, 0))
+    antennaBeam.Transparency = NumberSequence.new(0.6)
+    antennaBeam.FaceCamera = true
+    antennaBeam.Parent = antennaAttach0
+
+    antennaDistanceGui = Instance.new("BillboardGui")
+    antennaDistanceGui.Adornee = targetHead
+    antennaDistanceGui.Size = UDim2.new(0, 100, 0, 20)
+    antennaDistanceGui.StudsOffset = Vector3.new(0, 2.2, 0)
+    antennaDistanceGui.AlwaysOnTop = true
+    antennaDistanceGui.Parent = targetHead
+
+    antennaDistanceLabel = Instance.new("TextLabel", antennaDistanceGui)
+    antennaDistanceLabel.Size = UDim2.new(1,0,1,0)
+    antennaDistanceLabel.BackgroundTransparency = 1
+    antennaDistanceLabel.Text = "0 studs"
+    antennaDistanceLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    antennaDistanceLabel.Font = Enum.Font.GothamBold
+    antennaDistanceLabel.TextSize = 13
+    antennaDistanceLabel.TextStrokeTransparency = 0.5
+
+    antennaUpdateLoop = RunService.Heartbeat:Connect(function()
+        if not antennaAttach0 or not antennaAttach0.Parent 
+            or not antennaAttach1 or not antennaAttach1.Parent then
+            destroyAntenna()
+            return
+        end
+        local dist = (antennaAttach0.WorldPosition - antennaAttach1.WorldPosition).Magnitude
+        if antennaDistanceLabel then
+            antennaDistanceLabel.Text = string.format("%.1f studs", dist)
+        end
+    end)
+end
+
+-- ═══ MOVE PROPS (DIPERBARUI UNTUK SEMUA PROP) ═══
+local function movePropsToCFrame(cframe)
+    local function moveSingle(prop, offsetCF)
+        if prop and prop.Parent then
+            local remote = prop:FindFirstChild("SetCurrentCFrame") 
+                or prop:FindFirstChild("SetCurrentCFrame", true)
+            if remote then
+                pcall(function() 
+                    remote:InvokeServer(cframe * offsetCF) 
+                end)
+            end
+        end
+    end
+
+    -- 4 prop utama dengan offset spesial
+    moveSingle(cageProp, OFFSET_CAGE)
+    moveSingle(fenceProp, OFFSET_FENCE)
+    moveSingle(torchProp, OFFSET_TORCH)
+    moveSingle(signProp, OFFSET_SIGN)
+
+    -- Semua prop lain milik local player
+    local tc = getTrafficCones()
+    if tc then
+        for _, obj in ipairs(tc:GetChildren()) do
+            if obj.Name == "Prop"..LocalPlayer.Name 
+                and obj ~= cageProp 
+                and obj ~= fenceProp 
+                and obj ~= torchProp 
+                and obj ~= signProp then
+                moveSingle(obj, DEFAULT_PROP_OFFSET) -- di bawah kaki target
+            end
+        end
+    end
+end
+
+local function movePropsToTarget(targetHRP)
+    movePropsToCFrame(targetHRP.CFrame)
+end
+
+local function movePropsToSky()
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        movePropsToCFrame(CFrame.new(hrp.Position + SKY_OFFSET))
+    else
+        movePropsToCFrame(CFrame.new(0, 10000, 0))
+    end
+end
+
+-- ═══ JAIL CONTROL ═══
+local function stopJail()
+    jailTimerActive = false
+    if jailTimerThread then
+        task.cancel(jailTimerThread)
+        jailTimerThread = nil
+    end
+    if jailHeartbeat then
+        jailHeartbeat:Disconnect()
+        jailHeartbeat = nil
+    end
+    movePropsToSky()
+    jailActive = false
+    jailTarget = nil
+    destroyAntenna()
+end
+
+local function startJail(target)
+    if not target or not target.Character then return end
+    stopJail()
+    jailTarget = target
+    jailActive = true
+
+    local textToSet
+    if customJailText and customJailText ~= "" then
+        textToSet = customJailText
+    else
+        textToSet = DEFAULT_SIGN_TEXT
+    end
+    if signProp then setSignText(signProp, textToSet) end
+
+    jailHeartbeat = RunService.Heartbeat:Connect(function()
+        if not jailTarget or not jailTarget.Parent then
+            stopJail()
+            return
+        end
+        local targetChar = jailTarget.Character
+        local targetHRP = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+        if not targetHRP then
+            movePropsToSky()
+            return
+        end
+        movePropsToTarget(targetHRP)
+    end)
+end
+
+local function updateTimedJailText()
+    if not jailTimerActive or not jailTarget then return end
+    local remaining = math.max(0, jailTimerEnd - os.time())
+    local minutes = math.floor(remaining / 60)
+    local seconds = remaining % 60
+    local text = "This Player Was Jailed Timer: " .. string.format("%d:%02d", minutes, seconds)
+    if signProp then setSignText(signProp, text) end
+    if remaining <= 0 then stopJail() end
+end
+
+local function startTimedJail(target)
+    if not target or not target.Character then return end
+    stopJail()
+    startJail(target)
+
+    jailTimerActive = true
+    jailTimerEnd = os.time() + 90
+
+    updateTimedJailText()
+
+    local lastUpdate = os.time()
+    jailTimerThread = task.spawn(function()
+        while jailTimerActive and jailTarget == target do
+            task.wait(0.5)
+            if not jailTimerActive or jailTarget ~= target then break end
+            if os.time() - lastUpdate >= 10 then
+                lastUpdate = os.time()
+                updateTimedJailText()
+            end
+            if not jailTimerActive then break end
+        end
+    end)
+end
+
+-- ═══ SPECTATOR ═══
+local function startSpectate(target)
+    if spectating then stopSpectate() end
+    if not target or not target.Character then return end
+    local hum = target.Character:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    spectating = true
+    spectateTarget = target
+    Camera.CameraSubject = hum
+end
+
+local function stopSpectate()
+    if not spectating then return end
+    spectating = false
+    local myHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if myHum then Camera.CameraSubject = myHum end
+    spectateTarget = nil
+end
+
+-- ═══ ADMIN GUI (3 TOMBOL) ═══
+local function destroyAdminGui()
+    if guiUpdateLoop then guiUpdateLoop:Disconnect(); guiUpdateLoop = nil end
+    if adminGuiFrame then
+        adminGuiFrame:Destroy()
+        adminGuiFrame = nil
+        jailBtn = nil
+        timedJailBtn = nil
+        spekBtn = nil
+        nameLabel = nil
+    end
+    local existing = PlayerGui:FindFirstChild("AdminJailGui")
+    if existing then existing:Destroy() end
+end
+
+local function createAdminGuiForTarget(target)
+    destroyAdminGui()
+    if not target or not target.Character then return end
+    currentTarget = target
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "AdminJailGui"
+    sg.Parent = PlayerGui
+    sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    adminGuiFrame = Instance.new("Frame", sg)
+    adminGuiFrame.Size = UDim2.new(0, 240, 0, 70)
+    adminGuiFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    adminGuiFrame.BorderSizePixel = 0
+    Instance.new("UICorner", adminGuiFrame).CornerRadius = UDim.new(0, 8)
+
+    nameLabel = Instance.new("TextLabel", adminGuiFrame)
+    nameLabel.Size = UDim2.new(1, 0, 0, 20)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = target.Name
+    nameLabel.TextColor3 = Color3.new(1, 1, 1)
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 14
+    nameLabel.TextStrokeTransparency = 0.5
+
+    local btnContainer = Instance.new("Frame", adminGuiFrame)
+    btnContainer.Size = UDim2.new(1, 0, 0, 30)
+    btnContainer.Position = UDim2.new(0, 0, 0, 22)
+    btnContainer.BackgroundTransparency = 1
+    local layout = Instance.new("UIListLayout", btnContainer)
+    layout.FillDirection = Enum.FillDirection.Horizontal
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    layout.Padding = UDim.new(0, 6)
+
+    -- Tombol Jail biasa
+    jailBtn = Instance.new("TextButton", btnContainer)
+    jailBtn.Size = UDim2.new(0, 70, 1, 0)
+    jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
+    jailBtn.Text = "Jail"
+    jailBtn.TextColor3 = Color3.new(1, 1, 1)
+    jailBtn.Font = Enum.Font.GothamBold
+    jailBtn.TextSize = 14
+    jailBtn.AutoButtonColor = false
+    Instance.new("UICorner", jailBtn).CornerRadius = UDim.new(0, 6)
+
+    -- Tombol Jail 1:30
+    timedJailBtn = Instance.new("TextButton", btnContainer)
+    timedJailBtn.Size = UDim2.new(0, 70, 1, 0)
+    timedJailBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+    timedJailBtn.Text = "Jail 1:30"
+    timedJailBtn.TextColor3 = Color3.new(1, 1, 1)
+    timedJailBtn.Font = Enum.Font.GothamBold
+    timedJailBtn.TextSize = 14
+    timedJailBtn.AutoButtonColor = false
+    Instance.new("UICorner", timedJailBtn).CornerRadius = UDim.new(0, 6)
+
+    -- Tombol Spek
+    spekBtn = Instance.new("TextButton", btnContainer)
+    spekBtn.Size = UDim2.new(0, 70, 1, 0)
+    spekBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
+    spekBtn.Text = "Spek"
+    spekBtn.TextColor3 = Color3.new(1, 1, 1)
+    spekBtn.Font = Enum.Font.GothamBold
+    spekBtn.TextSize = 14
+    spekBtn.AutoButtonColor = false
+    Instance.new("UICorner", spekBtn).CornerRadius = UDim.new(0, 6)
+
+    -- Set status awal
+    if jailActive and jailTarget == target then
+        if jailTimerActive then
+            timedJailBtn.Text = "Stop"
+            timedJailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
+            jailBtn.Text = "Jail"
+            jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
+        else
+            jailBtn.Text = "Stop Jail"
+            jailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
+            timedJailBtn.Text = "Jail 1:30"
+            timedJailBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+        end
+    else
+        jailBtn.Text = "Jail"
+        jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
+        timedJailBtn.Text = "Jail 1:30"
+        timedJailBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+    end
+
+    if spectating and spectateTarget == target then
+        spekBtn.Text = "Stop Spek"
+        spekBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+    else
+        spekBtn.Text = "Spek"
+        spekBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
+    end
+
+    -- Events
+    jailBtn.MouseButton1Click:Connect(function()
+        local t = target
+        if not t or not t.Character then return end
+        if jailActive and jailTarget == t and not jailTimerActive then
+            stopJail()
+        else
+            stopJail()
+            startJail(t)
+        end
+        if jailActive and jailTarget == t and not jailTimerActive then
+            jailBtn.Text = "Stop Jail"
+            jailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
+            timedJailBtn.Text = "Jail 1:30"
+            timedJailBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+        else
+            jailBtn.Text = "Jail"
+            jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
+        end
+    end)
+
+    timedJailBtn.MouseButton1Click:Connect(function()
+        local t = target
+        if not t or not t.Character then return end
+        if jailTimerActive and jailTarget == t then
+            stopJail()
+        else
+            stopJail()
+            startTimedJail(t)
+        end
+        if jailTimerActive and jailTarget == t then
+            timedJailBtn.Text = "Stop"
+            timedJailBtn.BackgroundColor3 = Color3.fromRGB(230, 50, 50)
+            jailBtn.Text = "Jail"
+            jailBtn.BackgroundColor3 = Color3.fromRGB(30, 200, 30)
+        else
+            timedJailBtn.Text = "Jail 1:30"
+            timedJailBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+        end
+    end)
+
+    spekBtn.MouseButton1Click:Connect(function()
+        local t = target
+        if not t or not t.Character then return end
+        if spectating and spectateTarget == t then
+            stopSpectate()
+            spekBtn.Text = "Spek"
+            spekBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
+        else
+            startSpectate(t)
+            spekBtn.Text = "Stop Spek"
+            spekBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+        end
+    end)
+
+    guiUpdateLoop = RunService.RenderStepped:Connect(function()
+        if not target or not target.Parent or not target.Character then
+            destroyAdminGui()
+            return
+        end
+        local head = target.Character:FindFirstChild("Head")
+        if not head then
+            destroyAdminGui()
+            return
+        end
+        local worldPos = head.Position + head.CFrame.RightVector * 3 + Vector3.new(0, 1.5, 0)
+        local screenPos, onScreen = Camera:WorldToScreenPoint(worldPos)
+        if not onScreen then
+            adminGuiFrame.Visible = false
+        else
+            adminGuiFrame.Visible = true
+            adminGuiFrame.Position = UDim2.new(0, screenPos.X - 120, 0, screenPos.Y - 35)
+        end
+    end)
+end
+
+-- ═══ INPUT HANDLER ═══
+local function onAdminInputBegan(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+
+    local ray = Camera:ScreenPointToRay(input.Position.X, input.Position.Y)
+    local hit = Workspace:Raycast(ray.Origin, ray.Direction * 500)
+    if hit then
+        local char = hit.Instance:FindFirstAncestorOfClass("Model")
+        if char then
+            local plr = Players:GetPlayerFromCharacter(char)
+            if plr and plr ~= LocalPlayer then
+                createAdminGuiForTarget(plr)
+            end
+        end
+    end
+end
+
+-- ═══ TOOL: ADMIN JAIL ═══
+local function createAdminTool()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+    if backpack:FindFirstChild(ADMIN_TOOL_NAME) then return end
+
+    adminTool = Instance.new("Tool")
+    adminTool.Name = ADMIN_TOOL_NAME
+    adminTool.RequiresHandle = false
+    adminTool.CanBeDropped = false
+    adminTool.ToolTip = "Klik player untuk Jail/Spectator"
+
+    adminTool.Equipped:Connect(function()
+        touchConn = UserInputService.InputBegan:Connect(onAdminInputBegan)
+        if jailTarget then
+            destroyAntenna()
+            createAdminGuiForTarget(jailTarget)
+        end
+    end)
+
+    adminTool.Unequipped:Connect(function()
+        if touchConn then touchConn:Disconnect(); touchConn = nil end
+        destroyAdminGui()
+        if jailTarget and jailActive then
+            createAntenna(jailTarget)
+        end
+        stopSpectate()
+    end)
+
+    adminTool.Parent = backpack
+end
+
+-- ═══ SETUP GUI (DENGAN CUSTOM TEXT) ═══
+local function createSetupGui()
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "SetupGui"
+    sg.Parent = PlayerGui
+    sg.ResetOnSpawn = false
+
+    local frame = Instance.new("Frame", sg)
+    frame.Size = UDim2.new(0, 220, 0, 140)
+    frame.Position = UDim2.new(0.5, -110, 0.5, -70)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+    local title = Instance.new("TextLabel", frame)
+    title.Size = UDim2.new(1, -20, 0, 25)
+    title.Position = UDim2.new(0, 10, 0, 5)
+    title.BackgroundTransparency = 1
+    title.Text = "SETUP ADMIN JAIL"
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 12
+    title.TextColor3 = Color3.new(1, 1, 1)
+
+    local btnCheck = Instance.new("TextButton", frame)
+    btnCheck.Size = UDim2.new(1, -20, 0, 30)
+    btnCheck.Position = UDim2.new(0, 10, 0, 30)
+    btnCheck.BackgroundColor3 = Color3.fromRGB(0, 150, 200)
+    btnCheck.Text = "CHECK PROPS"
+    btnCheck.TextColor3 = Color3.new(1, 1, 1)
+    btnCheck.Font = Enum.Font.GothamBold
+    btnCheck.TextSize = 14
+    Instance.new("UICorner", btnCheck).CornerRadius = UDim.new(0, 6)
+
+    btnCheck.MouseButton1Click:Connect(function()
+        btnCheck.Text = "LOADING..."
+        btnCheck.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        local success = setupProps()
+        if success then
+            btnCheck.Text = "PROPS READY"
+            btnCheck.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
+        else
+            btnCheck.Text = "FAILED - RETRY"
+            btnCheck.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+        end
+        task.delay(2, function()
+            if success then
+                btnCheck.Text = "CHECK PROPS"
+                btnCheck.BackgroundColor3 = Color3.fromRGB(0, 150, 200)
+            end
+        end)
+    end)
+
+    local lblCustom = Instance.new("TextLabel", frame)
+    lblCustom.Size = UDim2.new(1, -20, 0, 20)
+    lblCustom.Position = UDim2.new(0, 10, 0, 65)
+    lblCustom.BackgroundTransparency = 1
+    lblCustom.Text = "Custom Jail Text:"
+    lblCustom.Font = Enum.Font.Gotham
+    lblCustom.TextSize = 12
+    lblCustom.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+
+    local txtInput = Instance.new("TextBox", frame)
+    txtInput.Size = UDim2.new(1, -20, 0, 25)
+    txtInput.Position = UDim2.new(0, 10, 0, 85)
+    txtInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    txtInput.TextColor3 = Color3.new(1, 1, 1)
+    txtInput.Font = Enum.Font.Gotham
+    txtInput.TextSize = 12
+    txtInput.PlaceholderText = "Masukkan teks..."
+    if customJailText then txtInput.Text = customJailText end
+
+    local btnSet = Instance.new("TextButton", frame)
+    btnSet.Size = UDim2.new(0, 80, 0, 25)
+    btnSet.Position = UDim2.new(0, 10, 0, 115)
+    btnSet.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+    btnSet.Text = "Set"
+    btnSet.TextColor3 = Color3.new(1, 1, 1)
+    btnSet.Font = Enum.Font.GothamBold
+    btnSet.TextSize = 12
+    Instance.new("UICorner", btnSet).CornerRadius = UDim.new(0, 4)
+    btnSet.MouseButton1Click:Connect(function()
+        customJailText = txtInput.Text
+        print("[Setup] Custom text set to:", customJailText)
+    end)
+
+    local btnReset = Instance.new("TextButton", frame)
+    btnReset.Size = UDim2.new(0, 80, 0, 25)
+    btnReset.Position = UDim2.new(0, 100, 0, 115)
+    btnReset.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    btnReset.Text = "Reset"
+    btnReset.TextColor3 = Color3.new(1, 1, 1)
+    btnReset.Font = Enum.Font.GothamBold
+    btnReset.TextSize = 12
+    Instance.new("UICorner", btnReset).CornerRadius = UDim.new(0, 4)
+    btnReset.MouseButton1Click:Connect(function()
+        customJailText = nil
+        txtInput.Text = ""
+        print("[Setup] Custom text reset to default.")
+    end)
+
+    return sg
+end
+
+-- ═══ TOOL: SETUP ═══
+local function createSetupTool()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+    if backpack:FindFirstChild(SETUP_TOOL_NAME) then return end
+
+    setupTool = Instance.new("Tool")
+    setupTool.Name = SETUP_TOOL_NAME
+    setupTool.RequiresHandle = false
+    setupTool.CanBeDropped = false
+    setupTool.ToolTip = "Setup props & custom text"
+
+    local setupGui = nil
+    setupTool.Equipped:Connect(function()
+        setupGui = createSetupGui()
+    end)
+    setupTool.Unequipped:Connect(function()
+        if setupGui then setupGui:Destroy(); setupGui = nil end
+    end)
+    setupTool.Parent = backpack
+end
+
+-- ═══ RESPAWN HANDLER ═══
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    createAdminTool()
+    createSetupTool()
+    if jailActive and jailTarget then
+        if LocalPlayer.Character:FindFirstChild(ADMIN_TOOL_NAME) then
+            -- tool dipegang
+        else
+            createAntenna(jailTarget)
+        end
+    end
+end)
+
+if LocalPlayer.Character then
+    createAdminTool()
+    createSetupTool()
+end
+
+print("ADMIN JAIL + SETUP final. Semua prop ikut ke kaki target, termasuk spawn manual.")
